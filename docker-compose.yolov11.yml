@@ -1,0 +1,51 @@
+services:
+  yolov11:
+    build:
+      context: .
+      dockerfile: Dockerfile.yolov11
+    container_name: yolov11-cpu
+    volumes:
+      # Mount your data directory for input images
+      - ./data:/app/data:ro
+      # Mount outputs directory for results
+      - ./outputs:/app/outputs
+      # Mount models directory for custom models
+      - ./models:/app/models
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - YOLO_VERBOSE=True
+    # Override the default command to keep container running
+    command: tail -f /dev/null
+    # Resource limits for CPU usage
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+  # Optional: Jupyter notebook for interactive development
+  yolov11-jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile.yolov11
+    container_name: yolov11-jupyter
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./data:/app/data:ro
+      - ./outputs:/app/outputs
+      - ./models:/app/models
+      - ./notebooks:/app/notebooks
+    environment:
+      - PYTHONUNBUFFERED=1
+      - JUPYTER_ENABLE_LAB=yes
+    command: >
+      bash -c "pip install jupyter jupyterlab &&
+               jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''"
+    profiles:
+      - jupyter

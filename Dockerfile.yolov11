@@ -1,0 +1,191 @@
+# YOLOv11 CPU-based Dockerfile
+FROM python:3.11-slim-bookworm
+
+# Add a dummy build argument to break Docker cache
+ARG CACHE_BUST=1
+
+# Environment settings
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Kolkata
+
+# Install system dependencies for OpenCV and YOLOv11
+RUN echo "Cache bust version: ${CACHE_BUST}" && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    # Basic utilities
+    curl \
+    git \
+    wget \
+    ca-certificates \
+    tzdata \
+    # OpenCV dependencies
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    libglib2.0-0 \
+    libgtk-3-0 \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
+    libv4l-dev \
+    libxvidcore-dev \
+    libx264-dev \
+    libjpeg-dev \
+    libpng-dev \
+    libtiff-dev \
+    libatlas-base-dev \
+    gfortran \
+    # Additional dependencies for YOLOv11
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libgstreamer1.0-0 \
+    libgstreamer-plugins-base1.0-0 \
+    # Timezone setup
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Upgrade pip and install wheel
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Install PyTorch CPU version (required for YOLOv11)
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# Install OpenCV
+RUN pip install --no-cache-dir opencv-python-headless
+
+# Install YOLOv11 and related packages
+RUN pip install --no-cache-dir \
+    ultralytics \
+    pillow \
+    numpy \
+    matplotlib \
+    seaborn \
+    pandas \
+    tqdm \
+    psutil \
+    thop \
+    pyyaml \
+    requests \
+    scipy
+
+# Install additional useful packages for computer vision
+RUN pip install --no-cache-dir \
+    albumentations \
+    wandb \
+    tensorboard \
+    clearml
+
+# Create directories for models and data
+RUN mkdir -p /app/models /app/data /app/runs /app/outputs
+
+# Set environment variables for YOLOv11
+ENV YOLO_VERBOSE=True
+ENV YOLO_CACHE_DIR=/app/models
+
+# Download YOLOv11n model (nano version - smallest and fastest for CPU)
+RUN python -c "from ultralytics import YOLO; model = YOLO('yolo11n.pt'); print('YOLOv11n model downloaded successfully')"
+
+# Create a simple test script to verify installation
+RUN echo '#!/usr/bin/env python3\n\
+import torch\n\
+import cv2\n\
+import numpy as np\n\
+from ultralytics import YOLO\n\
+\n\
+def test_yolov11_installation():\n\
+    """Test YOLOv11 installation and basic functionality"""\n\
+    print("Testing YOLOv11 installation...")\n\
+    \n\
+    # Test PyTorch\n\
+    print(f"PyTorch version: {torch.__version__}")\n\
+    print(f"PyTorch CPU available: {torch.cpu.is_available()}")\n\
+    \n\
+    # Test OpenCV\n\
+    print(f"OpenCV version: {cv2.__version__}")\n\
+    \n\
+    # Test YOLOv11\n\
+    try:\n\
+        model = YOLO("yolo11n.pt")\n\
+        print("YOLOv11 model loaded successfully")\n\
+        \n\
+        # Create a dummy image for testing\n\
+        dummy_img = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)\n\
+        \n\
+        # Run inference\n\
+        results = model(dummy_img, verbose=False)\n\
+        print(f"YOLOv11 inference successful! Detected {len(results[0].boxes)} objects")\n\
+        \n\
+        print("✅ All tests passed! YOLOv11 is ready to use.")\n\
+        return True\n\
+    except Exception as e:\n\
+        print(f"❌ Error during YOLOv11 test: {e}")\n\
+        return False\n\
+\n\
+if __name__ == "__main__":\n\
+    test_yolov11_installation()\n\
+' > /app/test_yolov11.py && chmod +x /app/test_yolov11.py
+
+# Create a sample inference script
+RUN echo '#!/usr/bin/env python3\n\
+import cv2\n\
+import numpy as np\n\
+from ultralytics import YOLO\n\
+import argparse\n\
+import os\n\
+\n\
+def run_inference(image_path, model_path="yolo11n.pt", output_dir="/app/outputs"):\n\
+    """Run YOLOv11 inference on an image"""\n\
+    \n\
+    # Load model\n\
+    model = YOLO(model_path)\n\
+    \n\
+    # Check if image exists\n\
+    if not os.path.exists(image_path):\n\
+        print(f"Error: Image file {image_path} not found")\n\
+        return\n\
+    \n\
+    # Run inference\n\
+    results = model(image_path)\n\
+    \n\
+    # Save results\n\
+    for r in results:\n\
+        # Save annotated image\n\
+        output_path = os.path.join(output_dir, f"result_{os.path.basename(image_path)}")\n\
+        r.save(output_path)\n\
+        print(f"Results saved to: {output_path}")\n\
+        \n\
+        # Print detection info\n\
+        if r.boxes is not None:\n\
+            print(f"Detected {len(r.boxes)} objects:")\n\
+            for box in r.boxes:\n\
+                cls = int(box.cls[0])\n\
+                conf = float(box.conf[0])\n\
+                class_name = model.names[cls]\n\
+                print(f"  - {class_name}: {conf:.2f}")\n\
+\n\
+if __name__ == "__main__":\n\
+    parser = argparse.ArgumentParser(description="YOLOv11 Inference")\n\
+    parser.add_argument("--image", required=True, help="Path to input image")\n\
+    parser.add_argument("--model", default="yolo11n.pt", help="Path to YOLOv11 model")\n\
+    parser.add_argument("--output", default="/app/outputs", help="Output directory")\n\
+    \n\
+    args = parser.parse_args()\n\
+    \n\
+    # Create output directory if it doesn\'t exist\n\
+    os.makedirs(args.output, exist_ok=True)\n\
+    \n\
+    run_inference(args.image, args.model, args.output)\n\
+' > /app/inference.py && chmod +x /app/inference.py
+
+# Expose port for potential web interface
+EXPOSE 8000
+
+# Set default command to run the test
+CMD ["python", "/app/test_yolov11.py"]
