@@ -14,10 +14,11 @@ Here's a breakdown of the required components:
     • Multi-Camera Re-Identification (ReID): This is the most complex part of your system. When a person leaves one camera and appears in another, this module links their temporary IDs.
         ◦ Feature Extraction: A deep learning model (often a specialized CNN like a re-identification network) will extract unique appearance features from the segmented person (using the SAM mask) or their bounding box.
         ◦ Feature Matching: A similarity search is performed across all cameras to find the closest match. When a new person appears in a different camera, their features are compared to the features of people who recently disappeared from other cameras.
-        ◦ ID Assignment: If a high-confidence match is found, the new detection is assigned the same global, consistent ID as the person from the previous camera.
+        ◦ ID Assignment: If a high-confidence match is found, the new detection is assigned the same global(import0, consistent ID as the person from the previous camera.
+Also there will be a global reset after the 12PM IST.
 2. The Path to Implementation
 Here's a step-by-step guide to building your system:
-Step 1: Set Up the Base Environment 💻
+Step 1: Set Up the Base Environment 💻 -- we already have docker container for the Environment.
     • Install necessary libraries:
         ◦ PyTorch/TensorFlow: For running the deep learning models.
         ◦ OpenCV: For handling video streams and basic image processing.
@@ -48,7 +49,7 @@ Step 4: Integrate All Components
         ◦ Use the bounding box coordinates and the global ID to determine when a person enters or leaves these predefined zones.
         ◦ For the entire time calculation, you can timestamp the creation of a new global ID ("In Time") and the timestamp when it is no longer detected by any camera for a certain period ("Out Time"). The difference is the total time spent in the premises.
         ◦ For activity-based time, calculate the total time a specific ID's bounding box intersects with a specific area of interest.
-Step 5: Data and Analytics Dashboard
+Step 5: Data and Analytics Dashboard – can have data pulled from mysql database.. front-end can be  steamlit for now later we will convert to react.
 
 Store the "in" and "out" timestamps, global IDs, and activity-based duration data in a database.
     • Develop a user interface or dashboard to visualize the data, showing metrics like:
@@ -95,4 +96,7 @@ The final step is to make the gathered data useful for your enterprise.
         ◦ New vs. Returning Customers: Use your ReID database to differentiate between first-time visitors and repeat customers.
 This video on training a custom Re-ID model can provide valuable insights for your project.
 Q: we want to monitor how long does a customer spent in side the premicises we are building a computer vision application for the enterprises as an architect level we will use yolov11 model as an initial start and mix it up the sam tooo ... need to track the customer in & out time and customer activity in inside the premises with the help of customer id from mutliple cameras .to support video processing for HAD Human activity classification , object tracking , object detection, Facial recognition, video summarization.let me configure a way multiview camera for REID tracking 
+
+
+WE will only concentrate on backend python and streamlit APP.. if FASTMCP or FASTAPI please add on...>
  
