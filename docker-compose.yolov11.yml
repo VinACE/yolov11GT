@@ -5,20 +5,15 @@ services:
       dockerfile: Dockerfile.yolov11
     container_name: yolov11-cpu
     volumes:
-      # Mount your data directory for input images
       - ./data:/app/data:ro
-      # Mount outputs directory for results
       - ./outputs:/app/outputs
-      # Mount models directory for custom models
       - ./models:/app/models
     ports:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
       - YOLO_VERBOSE=True
-    # Override the default command to keep container running
     command: tail -f /dev/null
-    # Resource limits for CPU usage
     deploy:
       resources:
         limits:
@@ -27,8 +22,7 @@ services:
         reservations:
           cpus: '1.0'
           memory: 1G
-
-  # Optional: Jupyter notebook for interactive development
+ 
   yolov11-jupyter:
     build:
       context: .
@@ -49,3 +43,17 @@ services:
                jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''"
     profiles:
       - jupyter
+ 
+  mysql:
+    image: mysql:8.0
+    container_name: yolov11-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword   # 🔐 change this
+      MYSQL_DATABASE: yolov11_db
+      MYSQL_USER: yolouser
+      MYSQL_PASSWORD: yolopassword       # 🔐 change this too
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./mysql_data:/var/lib/mysql
