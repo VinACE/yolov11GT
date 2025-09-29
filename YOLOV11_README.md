@@ -16,7 +16,7 @@ This Docker setup provides a complete YOLOv11 environment optimized for CPU infe
 
 ```bash
 # Build and start the container
-docker-compose -f docker-compose.yolov11.yml up -d
+sudo docker-compose -f docker-compose.yolov11.yml up -d
 
 # Check if everything is working
 docker-compose -f docker-compose.yolov11.yml exec yolov11 python /app/test_yolov11.py
@@ -26,7 +26,7 @@ docker-compose -f docker-compose.yolov11.yml exec yolov11 python /app/test_yolov
 
 ```bash
 # Build the image
-docker build -f Dockerfile.yolov11 -t yolov11-cpu .
+    docker build -f Dockerfile.yolov11 -t yolov11-cpu .
 
 # Run the container
 docker run -it --rm \

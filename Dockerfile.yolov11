@@ -82,6 +82,50 @@ RUN pip install --no-cache-dir \
     tensorboard \
     clearml
 
+# Install SuperGradients and its comprehensive dependencies
+RUN pip install --no-cache-dir \
+    supergradients \
+    # Core dependencies for SuperGradients
+    hydra-core \
+    omegaconf \
+    boto3 \
+    botocore \
+    # Data handling and augmentation
+    imgaug \
+    kornia \
+    # Model optimization and quantization
+    onnx \
+    onnxruntime \
+    # Additional computer vision utilities
+    timm \
+    einops \
+    # Logging and monitoring
+    loguru \
+    # Image processing
+    imageio \
+    imageio-ffmpeg \
+    # Configuration management
+    click \
+    # Progress bars and utilities
+    rich \
+    # Model serving and deployment
+    fastapi \
+    uvicorn \
+    # Additional ML utilities
+    scikit-learn \
+    # For model conversion and optimization
+    coremltools \
+    # For advanced data loading
+    webdataset
+
+# Backend service & analytics dependencies
+RUN pip install --no-cache-dir \
+    SQLAlchemy \
+    alembic \
+    apscheduler \
+    streamlit \
+    faiss-cpu
+
 # Create directories for models and data
 RUN mkdir -p /app/models /app/data /app/runs /app/outputs
 
