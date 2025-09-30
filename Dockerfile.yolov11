@@ -113,6 +113,11 @@ RUN pip install --no-cache-dir \
     faiss-cpu \
     pytz
 
+# Production ReID dependencies
+RUN pip install --no-cache-dir \
+    torchreid \
+    gdown
+
 # Try to install supergradients (optional - may fail on some systems)
 RUN pip install --no-cache-dir super-gradients || \
     echo "Note: super-gradients installation skipped (not critical for core functionality)"

@@ -10,11 +10,12 @@ from core.pipeline.multicam import MultiCameraOrchestrator
 def main() -> None:
     # Example sources; replace with RTSP/HTTP files as needed
     cameras = {
-        "cam1": "/app/data/test_video_1.mp4",
-        "cam2": "/app/data/test_video_2.mp4",
+        "cam1": "/app/data/demo3.mp4",
+        "cam2": "/app/data/demo3.mp4",
     }
 
-    orchestrator = MultiCameraOrchestrator(cameras)
+    # Initialize with OSNet ReID for production (set use_osnet=False to use stub)
+    orchestrator = MultiCameraOrchestrator(cameras, use_osnet=True)
 
     caps = {cid: cv2.VideoCapture(src) for cid, src in cameras.items()}
     try:
