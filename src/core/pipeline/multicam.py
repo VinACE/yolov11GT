@@ -171,10 +171,9 @@ class MultiCameraOrchestrator:
         cv2.putText(annotated, info_text, (10, 30), 
                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
         
-        # Save every Nth frame to avoid too many files
-        if frame_num % 30 == 0:  # Save every 30th frame
-            output_path = self.debug_dir / "annotated_frames" / f"{camera_id}_frame_{frame_num:06d}.jpg"
-            cv2.imwrite(str(output_path), annotated)
+        # Save every frame so IDs can be cross-verified frame-by-frame
+        output_path = self.debug_dir / "annotated_frames" / f"{camera_id}_frame_{frame_num:06d}.jpg"
+        cv2.imwrite(str(output_path), annotated)
     
     def process_frame(self, camera_id: str, frame_bgr: np.ndarray) -> None:
         dt_now = datetime.utcnow()
@@ -191,6 +190,9 @@ class MultiCameraOrchestrator:
         # Log detections
         self._log_detection(camera_id, frame_num, dets, dt_now)
         
+        # Frame index log (for DB cross-verification)
+        frame_index_path = self.debug_dir / "frame_global_ids.csv"
+
         # Process each detection for ReID
         processed_dets = []
         with get_db() as db:
@@ -246,6 +248,18 @@ class MultiCameraOrchestrator:
                 
                 processed_dets.append(d)
                 db.commit()
+
+        # Append a row for each detection in this frame
+        try:
+            is_new_file = not frame_index_path.exists()
+            with open(frame_index_path, "a") as f:
+                if is_new_file:
+                    f.write("timestamp,camera_id,frame_number,local_id,global_id,x1,y1,x2,y2\n")
+                for d in processed_dets:
+                    x1,y1,x2,y2 = [int(v) for v in d["bbox"]]
+                    f.write(f"{dt_now.isoformat()},{camera_id},{frame_num},{d.get('local_id','')},{d.get('global_id','')},{x1},{y1},{x2},{y2}\n")
+        except Exception:
+            pass
         
         # Save annotated frame periodically
         self._save_annotated_frame(frame_bgr, camera_id, frame_num, processed_dets)
