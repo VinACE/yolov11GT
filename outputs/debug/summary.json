@@ -1,0 +1,23 @@
+{
+  "timestamp": "2025-09-30T08:56:30.832389",
+  "total_frames_processed": 400,
+  "frames_per_camera": {
+    "cam1": 200,
+    "cam2": 200
+  },
+  "statistics": {
+    "total_detections": 858,
+    "new_visitors": 3,
+    "reid_matches": 855,
+    "cameras": [
+      "cam1",
+      "cam2"
+    ]
+  },
+  "reid_database_size": 3,
+  "known_global_ids": [
+    "G1759202506_cam1_1",
+    "G1759202520_cam1_23",
+    "G1759202675_cam1_246"
+  ]
+}
