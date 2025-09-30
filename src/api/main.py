@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -29,8 +33,12 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
+def get_session():
+    with get_db() as session:
+        yield session
+
 @app.get("/stats", response_model=StatsResponse)
-def stats(db: Session = Depends(get_db)) -> StatsResponse:
+def stats(db: Session = Depends(get_session)) -> StatsResponse:
     today = datetime.utcnow().date()
     start = datetime(today.year, today.month, today.day)
     total_today = db.query(VisitEvent).filter(VisitEvent.in_time >= start).count()
@@ -39,7 +47,7 @@ def stats(db: Session = Depends(get_db)) -> StatsResponse:
 
 
 @app.post("/reset-daily")
-def reset_daily(db: Session = Depends(get_db)) -> dict:
+def reset_daily(db: Session = Depends(get_session)) -> dict:
     # Archive: mark open events as closed at reset time
     now = datetime.utcnow()
     open_visits = db.query(VisitEvent).filter(VisitEvent.out_time.is_(None)).all()
