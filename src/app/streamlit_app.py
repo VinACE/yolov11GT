@@ -142,6 +142,32 @@ def main() -> None:
         except Exception:
             st.info("Not enough data yet for time series plot.")
 
+        # Campus dwell insights
+        st.subheader("🏫 Campus Dwell Insights")
+        try:
+            exited = dwell_df[dwell_df["dwell_minutes"].notna()].copy()
+            if len(exited) > 0:
+                # Histogram of dwell minutes (5-min bins)
+                max_minutes = exited["dwell_minutes"].max()
+                if pd.isna(max_minutes):
+                    max_minutes = 0
+                max_minutes = int(np.ceil(max_minutes))
+                max_minutes = max(5, max_minutes)
+                bin_edges = list(range(0, max_minutes + 5, 5))
+                hist_counts, edges = np.histogram(exited["dwell_minutes"], bins=bin_edges)
+                bin_labels = [f"{int(edges[i])}-{int(edges[i+1])}" for i in range(len(edges)-1)]
+                st.write("Dwell time distribution (5-min bins):")
+                st.bar_chart(pd.DataFrame({"count": hist_counts}, index=bin_labels))
+
+                # Top dwellers (top 20)
+                st.write("Top dwellers (exited visitors)")
+                top = exited.sort_values("dwell_minutes", ascending=False).head(20)[["visitor_id", "dwell_minutes"]]
+                st.bar_chart(top.set_index("visitor_id"))
+            else:
+                st.info("No completed visits yet to show campus dwell insights.")
+        except Exception:
+            st.info("Not enough data yet for campus dwell insights.")
+
     # Server-side dwell stats API (aggregated)
     st.subheader("🧮 Dwell Summary (Server)")
     try:
