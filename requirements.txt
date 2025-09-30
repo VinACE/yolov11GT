@@ -1,0 +1,56 @@
+# Core ML/CV
+torch
+torchvision
+torchaudio
+ultralytics
+opencv-python-headless
+pillow
+numpy
+matplotlib
+seaborn
+pandas
+scipy
+
+# Computer Vision Extras
+albumentations
+wandb
+tensorboard
+clearml
+
+# SuperGradients and dependencies
+supergradients
+hydra-core
+omegaconf
+boto3
+botocore
+imgaug
+kornia
+onnx
+onnxruntime
+timm
+einops
+loguru
+imageio
+imageio-ffmpeg
+click
+rich
+scikit-learn
+coremltools
+webdataset
+
+# Backend & Storage
+fastapi
+uvicorn
+SQLAlchemy
+alembic
+apscheduler
+streamlit
+faiss-cpu
+
+# Additional utilities
+tqdm
+psutil
+thop
+pyyaml
+requests
+pytz
