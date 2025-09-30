@@ -8,8 +8,11 @@ services:
       - ./data:/app/data:ro
       - ./outputs:/app/outputs
       - ./models:/app/models
+      - ./src:/app/src
+      - ./scripts:/app/scripts
     ports:
       - "8000:8000"
+      - "8501:8501"
     environment:
       - PYTHONUNBUFFERED=1
       - YOLO_VERBOSE=True
@@ -45,19 +48,6 @@ services:
     profiles:
       - jupyter
  
-  mysql:
-    image: mysql:8.0
-    container_name: yolov11-mysql
-    restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: rootpassword   # 🔐 change this
-      MYSQL_DATABASE: yolov11_db
-      MYSQL_USER: yolouser
-      MYSQL_PASSWORD: yolopassword       # 🔐 change this too
-    ports:
-      - "3306:3306"
-    volumes:
-      - ./mysql_data:/var/lib/mysql 
   mysql:
     image: mysql:8.0
     container_name: yolov11-mysql
