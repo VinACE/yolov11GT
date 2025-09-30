@@ -1,14 +1,15 @@
 from typing import Dict, Any, List
+from collections import deque, defaultdict
 import cv2
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
 
 from core.detection.yolo import YoloV11Detector
 from core.segmentation.sam import SamSegmenter
-from core.tracking.tracker import SimpleTracker
+from core.tracking.tracker import StrongSortLite
 from core.reid.embedding import ReidEmbedder, ReidIndex
 from core.storage.db import get_db
 from core.storage.models import Visitor, VisitEvent
@@ -27,9 +28,9 @@ class MultiCameraOrchestrator:
         self.camera_sources = camera_sources
         self.detector = YoloV11Detector()
         self.segmenter = SamSegmenter()
-        self.tracker_by_cam = {cid: SimpleTracker() for cid in camera_sources}
+        self.tracker_by_cam = {cid: StrongSortLite() for cid in camera_sources}
         
-        # Initialize ReID embedder - try OSNet first, fallback to stub
+        # Initialize ReID embedder - prefer FastReID if enabled, else OSNet, else stub
         if use_osnet and OSNET_AVAILABLE:
             try:
                 self.embedder = OSNetReIDEmbedder()
@@ -44,10 +45,39 @@ class MultiCameraOrchestrator:
                 print("ℹ️  Using stub ReID embedder (use_osnet=False)")
             else:
                 print("ℹ️  Using stub ReID embedder (OSNet not available)")
+
+        # Try FastReID if explicitly enabled
+        try:
+            from core.reid.fastreid_embedder import FastReIDEmbedder
+            fre = FastReIDEmbedder()
+            if getattr(fre, 'enabled', False):
+                self.embedder = fre
+                print("✅ Using FastReID embedder")
+        except Exception as e:
+            print(f"ℹ️  FastReID not enabled/available: {e}")
         
         # Initialize ReID index with the embedding dimensionality
         embed_dim = getattr(self.embedder, "dim", 256)
         self.reid_index = ReidIndex(dim=embed_dim)
+        # Configure EMA momentum and TTL if provided
+        ema_m = float(os.environ.get("REID_EMA_MOMENTUM", "0.9"))
+        ttl_s = int(os.environ.get("REID_GALLERY_TTL_SECONDS", "60"))
+        self.reid_index.set_ema_momentum(ema_m)
+        self.reid_index.set_ttl_seconds(ttl_s)
+        
+        # Visitor exit timeout – mark visitor as exited if not seen for N seconds
+        # You can override via env var VISITOR_TIMEOUT_SECONDS
+        self.timeout_seconds = int(os.environ.get("VISITOR_TIMEOUT_SECONDS", "30"))
+
+        # Frame processing frequency to reduce compute: process every Nth frame
+        # Set via env var FRAME_PROCESS_EVERY (default 1 = process all)
+        self.process_every = max(1, int(os.environ.get("FRAME_PROCESS_EVERY", "1")))
+
+        # ReID matching configuration (env-tunable)
+        self.reid_sim_threshold = float(os.environ.get("REID_SIM_THRESHOLD", "0.62"))
+        self.feature_avg_window = max(1, int(os.environ.get("FEATURE_AVG_WINDOW", "3")))
+        self.min_crop_height = int(os.environ.get("MIN_CROP_HEIGHT", "80"))
+        self.same_cam_continuity_seconds = int(os.environ.get("SAME_CAM_CONTINUITY_SECONDS", "5"))
         
         # Debug and logging setup
         self.debug_dir = Path(debug_dir)
@@ -65,6 +95,10 @@ class MultiCameraOrchestrator:
         
         # Frame counter
         self.frame_count = {cid: 0 for cid in camera_sources}
+
+        # Per-camera feature buffers for multi-frame averaging and last assignments
+        self.feature_buffers: Dict[str, Dict[int, deque]] = {cid: defaultdict(lambda: deque(maxlen=self.feature_avg_window)) for cid in camera_sources}
+        self.last_assignment: Dict[str, Dict[int, Dict[str, Any]]] = {cid: {} for cid in camera_sources}
         
         # Statistics
         self.stats = {
@@ -79,9 +113,16 @@ class MultiCameraOrchestrator:
         print(f"   - ReID logs: {self.reid_log}")
 
     def _extract_crop(self, frame: np.ndarray, bbox: List[float]) -> np.ndarray:
+        # Add 10% context padding around the bbox to stabilize embeddings
         x1, y1, x2, y2 = [int(v) for v in bbox]
-        x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
+        w = x2 - x1
+        h = y2 - y1
+        pad_x = int(0.1 * w)
+        pad_y = int(0.1 * h)
+        x1 = max(0, x1 - pad_x)
+        y1 = max(0, y1 - pad_y)
+        x2 = min(frame.shape[1], x2 + pad_x)
+        y2 = min(frame.shape[0], y2 + pad_y)
         return frame[y1:y2, x1:x2].copy()
 
     def _log_detection(self, camera_id: str, frame_num: int, detections: List[Dict], timestamp: datetime) -> None:
@@ -179,6 +220,12 @@ class MultiCameraOrchestrator:
         dt_now = datetime.utcnow()
         self.frame_count[camera_id] += 1
         frame_num = self.frame_count[camera_id]
+
+        # Frame skipping optimization: skip heavy processing on non-selected frames
+        if self.process_every > 1 and (frame_num % self.process_every) != 0:
+            # Optionally still dump raw frame counter for traceability
+            # but skip detection/ReID to save compute
+            return
         
         # Detection
         dets = self.detector.detect(frame_bgr)
@@ -195,16 +242,53 @@ class MultiCameraOrchestrator:
 
         # Process each detection for ReID
         processed_dets = []
+        used_globals_this_frame: set[str] = set()
         with get_db() as db:
             for d in dets:
+                # Same-camera continuity: if same local_id seen very recently, reuse
+                prev = self.last_assignment[camera_id].get(d['local_id'])
+                if prev is not None and (dt_now - prev['ts']).total_seconds() <= self.same_cam_continuity_seconds:
+                    global_id = prev['global_id']
+                    visitor = db.query(Visitor).filter_by(global_id=global_id).first()
+                    if visitor:
+                        visitor.last_seen_at = dt_now
+                    d["global_id"] = global_id
+                    self._log_reid_assignment(camera_id, frame_num, d['local_id'], global_id, is_new=False, similarity=1.0, timestamp=dt_now)
+                    self.last_assignment[camera_id][d['local_id']] = {"global_id": global_id, "ts": dt_now}
+                    processed_dets.append(d)
+                    db.commit()
+                    continue
+
+                # Extract crop; discard too-small crops to avoid noisy embeddings
                 crop = self._extract_crop(frame_bgr, d["bbox"])
-                emb = self.embedder.embed(crop)
-                match = self.reid_index.search(emb, topk=1)
-                
-                if match is None or (match is not None and match[1] < 0.7):
+                if crop.size == 0 or crop.shape[0] < self.min_crop_height:
+                    # Skip ReID; treat as no match to avoid false positives
+                    match = None
+                    emb_avg = None
+                else:
+                    emb = self.embedder.embed(crop)
+                    # Attach current single-frame emb for StrongSortLite association
+                    d["emb"] = emb
+                    # Buffer features per local track and average
+                    buf = self.feature_buffers[camera_id][d['local_id']]
+                    buf.append(emb)
+                    emb_avg = np.mean(np.stack(list(buf)), axis=0).astype(np.float32)
+                    # Top-k candidate search with TTL filtering
+                    topk = int(os.environ.get("REID_TOPK", "5"))
+                    candidates = self.reid_index.search_topk(emb_avg, topk=topk, now_ts=dt_now.timestamp())
+                    # Choose first candidate that meets sim threshold and not already used in this frame
+                    match = None
+                    for gid, sim in candidates:
+                        if sim >= self.reid_sim_threshold and gid not in used_globals_this_frame:
+                            match = (gid, sim)
+                            break
+
+                if match is None or (match is not None and match[1] < self.reid_sim_threshold):
                     # New visitor detected
                     global_id = f"G{dt_now.timestamp():.0f}_{camera_id}_{d['local_id']}"
-                    self.reid_index.add(global_id, emb)
+                    # If we have a valid averaged embedding, add to index
+                    if emb_avg is not None:
+                        self.reid_index.add(global_id, emb_avg, now_ts=dt_now.timestamp())
                     
                     # Log ReID assignment
                     self._log_reid_assignment(
@@ -220,6 +304,8 @@ class MultiCameraOrchestrator:
                     
                     d["global_id"] = global_id
                     print(f"🆕 NEW visitor: {global_id} (cam={camera_id}, local_id={d['local_id']})")
+                    # Cache assignment
+                    self.last_assignment[camera_id][d['local_id']] = {"global_id": global_id, "ts": dt_now}
                 else:
                     # Existing visitor - ReID match
                     global_id = match[0]
@@ -245,6 +331,13 @@ class MultiCameraOrchestrator:
                     
                     d["global_id"] = global_id
                     print(f"🔄 REID match: {global_id} (cam={camera_id}, local_id={d['local_id']}, sim={similarity:.3f})")
+                    # Update index EMA and last_seen
+                    if emb_avg is not None:
+                        self.reid_index.update(global_id, emb_avg, now_ts=dt_now.timestamp())
+                    # Reserve this global for this frame to prevent duplicates
+                    used_globals_this_frame.add(global_id)
+                    # Cache assignment
+                    self.last_assignment[camera_id][d['local_id']] = {"global_id": global_id, "ts": dt_now}
                 
                 processed_dets.append(d)
                 db.commit()
@@ -267,6 +360,9 @@ class MultiCameraOrchestrator:
         # Save summary stats periodically
         if frame_num % 100 == 0:
             self._save_summary()
+        
+        # Housekeeping: close timed-out visits (no sighting for timeout_seconds)
+        self._close_timed_out_visits()
     
     def _save_summary(self) -> None:
         """Save summary statistics to file"""
@@ -283,5 +379,30 @@ class MultiCameraOrchestrator:
             json.dump(summary, f, indent=2)
         
         print(f"📊 Summary saved: {self.stats['new_visitors']} new, {self.stats['reid_matches']} matches")
+
+    def _close_timed_out_visits(self) -> None:
+        """Mark visits as exited if their visitor hasn't been seen within timeout window."""
+        cutoff = datetime.utcnow() - timedelta(seconds=self.timeout_seconds)
+        try:
+            with get_db() as db:
+                # Find visitors with open visits but last_seen before cutoff
+                stale = (
+                    db.query(Visitor)
+                    .join(VisitEvent, VisitEvent.visitor_id == Visitor.id)
+                    .filter(VisitEvent.out_time.is_(None))
+                    .filter(Visitor.last_seen_at < cutoff)
+                    .all()
+                )
+                for v in stale:
+                    open_visit = (
+                        db.query(VisitEvent)
+                        .filter(VisitEvent.visitor_id == v.id, VisitEvent.out_time.is_(None))
+                        .first()
+                    )
+                    if open_visit:
+                        open_visit.out_time = v.last_seen_at
+                db.commit()
+        except Exception:
+            pass
 
 

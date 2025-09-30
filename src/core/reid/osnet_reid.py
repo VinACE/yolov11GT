@@ -4,6 +4,7 @@ Production ReID using OSNet (Omni-Scale Network)
 Replace the stub embedder with this for real appearance-based matching
 """
 import numpy as np
+import os
 import torch
 import torchvision.transforms as T
 from PIL import Image
@@ -20,7 +21,7 @@ class OSNetReIDEmbedder:
     This provides REAL appearance-based matching, not random!
     """
     
-    def __init__(self, model_name='osnet_x1_0', dim=512):
+    def __init__(self, model_name='osnet_x0_75', dim=512):
         self.dim = dim
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
@@ -28,6 +29,7 @@ class OSNetReIDEmbedder:
         # Install: pip install torchreid
         try:
             import torchreid
+            model_name = os.environ.get('TORCHREID_MODEL_NAME', model_name)
             self.model = torchreid.models.build_model(
                 name=model_name,
                 num_classes=1000,  # Doesn't matter for feature extraction
