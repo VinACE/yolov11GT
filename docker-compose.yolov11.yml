@@ -16,6 +16,20 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - YOLO_VERBOSE=True
+      - FRAME_PROCESS_EVERY=5
+      - VISITOR_TIMEOUT_SECONDS=15
+      - REID_SIM_THRESHOLD=0.71
+      - FEATURE_AVG_WINDOW=5
+      - MIN_CROP_HEIGHT=120
+      - SAME_CAM_CONTINUITY_SECONDS=10
+      - REID_TOPK=5
+      - REID_GALLERY_TTL_SECONDS=60
+      - REID_EMA_MOMENTUM=0.9
+      - FASTREID_ENABLED=0
+      - TORCHREID_MODEL_NAME=osnet_x0_75
+      - TORCHREID_IMAGE_SIZE=256x128
+      - TORCHREID_PIXEL_MEAN=0.485,0.456,0.406
+      - TORCHREID_PIXEL_STD=0.229,0.224,0.225
     command: tail -f /dev/null
     deploy:
       resources:
@@ -47,6 +61,20 @@ services:
                jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''"
     profiles:
       - jupyter
+
+  yolov11-reset:
+    build:
+      context: .
+      dockerfile: Dockerfile.yolov11
+    container_name: yolov11-reset
+    depends_on:
+      - yolov11
+    environment:
+      - ANALYTICS_API_BASE=http://yolov11-cpu:8000
+      - TZ=Asia/Kolkata
+    command: >
+      bash -lc "python /app/scripts/scheduler_reset.py"
+    restart: unless-stopped
  
   mysql:
     image: mysql:8.0

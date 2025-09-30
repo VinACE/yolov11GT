@@ -33,16 +33,16 @@ case $choice in
     1)
         echo "🔥 Starting FastAPI on http://localhost:8000"
         echo "📖 API Docs: http://localhost:8000/docs"
-        docker-compose -f $COMPOSE_FILE exec yolov11 bash -c "cd /app && python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000"
+        docker-compose -f $COMPOSE_FILE exec yolov11 bash -c "pkill -f 'uvicorn' || true; cd /app && python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000"
         ;;
     2)
         echo "📊 Starting Streamlit on http://localhost:8501"
-        docker-compose -f $COMPOSE_FILE exec yolov11 bash -c "cd /app && streamlit run src/app/streamlit_app.py --server.address 0.0.0.0 --server.port 8501"
+        docker-compose -f $COMPOSE_FILE exec yolov11 bash -c "pkill -f 'streamlit run' || true; cd /app && streamlit run src/app/streamlit_app.py --server.address 0.0.0.0 --server.port 8501"
         ;;
     3)
         echo "🎥 Starting Pipeline Runner"
         echo "⚠️  Make sure you've configured camera sources in scripts/run_pipeline.py"
-        docker-compose -f $COMPOSE_FILE exec yolov11 bash -c "cd /app && python scripts/run_pipeline.py"
+        docker-compose -f $COMPOSE_FILE exec yolov11 bash -c "pkill -f run_pipeline || true; cd /app && python scripts/run_pipeline.py"
         ;;
     4)
         echo "⏰ Starting Daily Reset Scheduler (12:00 PM IST)"
@@ -78,16 +78,25 @@ print('🎉 All tests passed! System is ready.')
 "
         ;;
     6)
-        echo "🚀 Starting All Services..."
-        echo ""
+        echo "🚀 Restarting container and starting all services..."
+        # Ensure any previous app processes are stopped and container proxy ports are clean
+        docker-compose -f $COMPOSE_FILE exec yolov11 bash -c "pkill -f 'uvicorn' || true; pkill -f 'streamlit run' || true; pkill -f run_pipeline || true" || true
+        docker-compose -f $COMPOSE_FILE up -d --force-recreate yolov11
+        sleep 3
+
         echo "Starting FastAPI in background..."
         docker-compose -f $COMPOSE_FILE exec -d yolov11 bash -c "cd /app && python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000"
         sleep 2
-        
-        echo "Starting Streamlit..."
+
+        echo "Starting Streamlit in background (8501)..."
+        docker-compose -f $COMPOSE_FILE exec -d yolov11 bash -c "cd /app && streamlit run src/app/streamlit_app.py --server.address 0.0.0.0 --server.port 8501"
+        sleep 2
+
+        echo "Starting Pipeline in background..."
+        docker-compose -f $COMPOSE_FILE exec -d yolov11 bash -c "cd /app && python scripts/run_pipeline.py"
+
         echo "📖 API: http://localhost:8000/docs"
         echo "📊 Dashboard: http://localhost:8501"
-        docker-compose -f $COMPOSE_FILE exec yolov11 bash -c "cd /app && streamlit run src/app/streamlit_app.py --server.address 0.0.0.0 --server.port 8501"
         ;;
     7)
         echo "📋 Container Logs:"
