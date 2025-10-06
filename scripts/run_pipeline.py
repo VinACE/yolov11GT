@@ -11,8 +11,10 @@ def main() -> None:
     # Example sources; replace with RTSP/HTTP files as needed
     cameras = {
         "cam1": "/app/data/demo3.mp4",
-        "cam2": "/app/data/SampleGT.mp4",
+        "cam2": "/app/data/Sample.mp4",
+        "cam3": "/app/data/SampleGT.mp4",
     }
+# "cam1": "/app/data/demo3.mp4",
 
     # Initialize with OSNet ReID for production (set use_osnet=False to use stub)
     orchestrator = MultiCameraOrchestrator(cameras, use_osnet=True)
