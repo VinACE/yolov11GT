@@ -78,6 +78,14 @@ class MultiCameraOrchestrator:
         self.feature_avg_window = max(1, int(os.environ.get("FEATURE_AVG_WINDOW", "3")))
         self.min_crop_height = int(os.environ.get("MIN_CROP_HEIGHT", "80"))
         self.same_cam_continuity_seconds = int(os.environ.get("SAME_CAM_CONTINUITY_SECONDS", "5"))
+        # Lightweight cosine-margin reranker
+        self.reid_rerank_alpha = float(os.environ.get("REID_RERANK_ALPHA", "0.3"))  # weight for EMA similarity
+        self.reid_rerank_margin = float(os.environ.get("REID_RERANK_MARGIN", "0.03"))  # min gap top vs second
+        # Geometry gating (soft bonuses/penalties)
+        self.geometry_config_path = os.environ.get("GEOMETRY_CONFIG_PATH", "")
+        self.geometry_bonus = float(os.environ.get("GEOMETRY_GATING_WEIGHT", "0.05"))
+        self.geometry_penalty = float(os.environ.get("GEOMETRY_PENALTY", "0.05"))
+        self._adjacency = None  # lazy loaded
         
         # Debug and logging setup
         self.debug_dir = Path(debug_dir)
@@ -276,12 +284,27 @@ class MultiCameraOrchestrator:
                     # Top-k candidate search with TTL filtering
                     topk = int(os.environ.get("REID_TOPK", "5"))
                     candidates = self.reid_index.search_topk(emb_avg, topk=topk, now_ts=dt_now.timestamp())
-                    # Choose first candidate that meets sim threshold and not already used in this frame
+                    # Cosine-margin reranking against per-ID EMA feature
                     match = None
-                    for gid, sim in candidates:
-                        if sim >= self.reid_sim_threshold and gid not in used_globals_this_frame:
-                            match = (gid, sim)
-                            break
+                    if candidates:
+                        q = emb_avg / (np.linalg.norm(emb_avg) + 1e-8)
+                        alpha = self.reid_rerank_alpha
+                        scored = []
+                        for gid, sim in candidates:
+                            ema = self.reid_index.id_to_ema.get(gid)
+                            sim_ema = float(np.dot(q, ema)) if ema is not None else sim
+                            composite = (1.0 - alpha) * sim + alpha * sim_ema
+                            # Apply soft geometry gating if available
+                            composite += self._geometry_delta(camera_id, gid, dt_now)
+                            scored.append((gid, sim, composite))
+                        # sort by composite score desc
+                        scored.sort(key=lambda x: x[2], reverse=True)
+                        # apply per-frame uniqueness and thresholds with margin
+                        top_gid, top_sim, top_score = scored[0]
+                        second_score = scored[1][2] if len(scored) > 1 else -1.0
+                        margin_ok = (top_score - second_score) >= self.reid_rerank_margin
+                        if top_sim >= self.reid_sim_threshold and margin_ok and top_gid not in used_globals_this_frame:
+                            match = (top_gid, top_sim)
 
                 if match is None or (match is not None and match[1] < self.reid_sim_threshold):
                     # New visitor detected
@@ -363,6 +386,45 @@ class MultiCameraOrchestrator:
         
         # Housekeeping: close timed-out visits (no sighting for timeout_seconds)
         self._close_timed_out_visits()
+
+    def _load_geometry(self) -> None:
+        if self._adjacency is not None:
+            return
+        if not self.geometry_config_path or not Path(self.geometry_config_path).exists():
+            self._adjacency = {}
+            return
+        try:
+            import json, yaml  # type: ignore
+        except Exception:
+            yaml = None
+        try:
+            text = Path(self.geometry_config_path).read_text()
+            cfg = yaml.safe_load(text) if 'yaml' in (yaml.__name__ if yaml else '') else json.loads(text)
+            self._adjacency = cfg.get('adjacency', {}) if isinstance(cfg, dict) else {}
+        except Exception:
+            self._adjacency = {}
+
+    def _geometry_delta(self, current_cam: str, candidate_gid: str, now_ts: datetime) -> float:
+        """Return a soft bonus/penalty based on camera adjacency.
+
+        For phase 1, we only check if the last camera of the candidate is adjacent.
+        """
+        try:
+            self._load_geometry()
+            if not self._adjacency:
+                return 0.0
+            # Heuristic: parse last camera from global_id format G<ts>_<cam>_<local>
+            parts = candidate_gid.split('_')
+            prev_cam = parts[1] if len(parts) >= 3 else None
+            if not prev_cam:
+                return 0.0
+            neighbors = set(self._adjacency.get(current_cam, []))
+            if prev_cam in neighbors:
+                return self.geometry_bonus
+            else:
+                return -self.geometry_penalty
+        except Exception:
+            return 0.0
     
     def _save_summary(self) -> None:
         """Save summary statistics to file"""

@@ -19,13 +19,21 @@ services:
       - FRAME_PROCESS_EVERY=5
       - VISITOR_TIMEOUT_SECONDS=15
       - REID_SIM_THRESHOLD=0.71
+      - REID_RERANK_ALPHA=0.35
+      - REID_RERANK_MARGIN=0.05
       - FEATURE_AVG_WINDOW=5
       - MIN_CROP_HEIGHT=120
       - SAME_CAM_CONTINUITY_SECONDS=10
       - REID_TOPK=5
       - REID_GALLERY_TTL_SECONDS=60
       - REID_EMA_MOMENTUM=0.9
-      - FASTREID_ENABLED=0
+      - FASTREID_ENABLED=1
+      # FastReID model selection
+      # Option A: presets (msmt17_r50, market1501_r50)
+      - FASTREID_PRESET=msmt17_r50
+      # Option B: explicit paths (override preset if set)
+      # - FASTREID_CONFIG=/app/models/fast-reid-configs/msmt17/bagtricks_R50.yml
+      # - FASTREID_WEIGHTS=/app/models/fast-reid-weights/msmt17/bagtricks_R50.pth
       - TORCHREID_MODEL_NAME=osnet_x0_75
       - TORCHREID_IMAGE_SIZE=256x128
       - TORCHREID_PIXEL_MEAN=0.485,0.456,0.406

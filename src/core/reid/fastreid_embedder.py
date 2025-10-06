@@ -13,6 +13,46 @@ class FastReIDEmbedder:
     def __init__(self) -> None:
         self.dim = 512
         self.enabled = os.environ.get("FASTREID_ENABLED", "0") == "1"
+        # Optional runtime-configurable model selection
+        self.config_path = os.environ.get("FASTREID_CONFIG", "")
+        self.weights_path = os.environ.get("FASTREID_WEIGHTS", "")
+        # Simple preset mapping if explicit paths are not set
+        preset = os.environ.get("FASTREID_PRESET", "").lower()
+        if self.enabled and (not self.config_path or not self.weights_path) and preset:
+            if preset == "msmt17_r50":
+                # Prefer existing weights file among common names
+                self.config_path = self.config_path or "/app/models/fast-reid-configs/msmt17/bagtricks_R50.yml"
+                msmt_weight_candidates = [
+                    "/app/models/fast-reid-weights/msmt17/msmt_bot_R50.pth",
+                    "/app/models/fast-reid-weights/msmt17/bagtricks_R50.pth",
+                ]
+                for p in msmt_weight_candidates:
+                    if os.path.exists(p):
+                        self.weights_path = p
+                        break
+                if not self.weights_path:
+                    self.weights_path = msmt_weight_candidates[-1]
+            elif preset == "market1501_r50":
+                self.config_path = self.config_path or "/app/models/fast-reid-configs/market1501/bagtricks_R50.yml"
+                market_weight_candidates = [
+                    "/app/models/fast-reid-weights/market1501/market_bot_R50.pth",
+                    "/app/models/fast-reid-weights/market1501/bagtricks_R50.pth",
+                ]
+                for p in market_weight_candidates:
+                    if os.path.exists(p):
+                        self.weights_path = p
+                        break
+                if not self.weights_path:
+                    self.weights_path = market_weight_candidates[-1]
+        if self.enabled:
+            msg = "✅ FastReID enabled"
+            if self.config_path:
+                msg += f" | config={self.config_path}"
+            if self.weights_path:
+                msg += f" | weights={self.weights_path}"
+            if preset:
+                msg += f" | preset={preset}"
+            print(msg)
 
     def embed(self, crop_bgr: np.ndarray) -> np.ndarray:
         if not self.enabled:

@@ -50,6 +50,18 @@ class DwellStatsResponse(BaseModel):
     visitors: list[DwellItem]
 
 
+class PresenceHourItem(BaseModel):
+    hour_start: datetime
+    arrivals: int
+    presence_minutes: float
+    unique_visitors: int
+
+
+class PresenceHourlyResponse(BaseModel):
+    date_utc: str
+    buckets: list[PresenceHourItem]
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
@@ -176,6 +188,72 @@ def dwell_stats(db: Session = Depends(get_session)) -> DwellStatsResponse:
         p50_dwell_seconds=p50,
         p95_dwell_seconds=p95,
         visitors=items,
+    )
+
+
+@app.get("/presence-hourly", response_model=PresenceHourlyResponse)
+def presence_hourly(db: Session = Depends(get_session)) -> PresenceHourlyResponse:
+    """Presence analytics per hour for today (UTC-based buckets).
+
+    - arrivals: number of visits with in_time inside the hour
+    - presence_minutes: sum of overlap seconds of each visit with the hour, divided by 60
+    - unique_visitors: distinct global ids with any overlap in the hour
+    """
+    now = datetime.utcnow()
+    today = now.date()
+    day_start = datetime(today.year, today.month, today.day)
+    day_end = day_start + timedelta(days=1)
+
+    # Pull all visits that intersect today (in_time < day_end and (out_time or now) > day_start)
+    visits = (
+        db.query(VisitEvent, Visitor)
+        .join(Visitor, VisitEvent.visitor_id == Visitor.id)
+        .filter(VisitEvent.in_time < day_end)
+        .filter((VisitEvent.out_time.is_(None)) | (VisitEvent.out_time > day_start))
+        .all()
+    )
+
+    # Prepare 24 hourly buckets
+    buckets: list[PresenceHourItem] = []
+    for h in range(24):
+        h_start = day_start + timedelta(hours=h)
+        h_end = h_start + timedelta(hours=1)
+        arrivals = 0
+        presence_seconds = 0.0
+        unique_set: set[str] = set()
+
+        for visit, visitor in visits:
+            v_start = max(visit.in_time, day_start)
+            v_end = visit.out_time or now
+            # Skip if visit ended before this hour begins or starts after this hour ends
+            if v_end <= h_start or v_start >= h_end:
+                continue
+
+            # Any overlap contributes to presence and uniqueness
+            overlap_start = max(v_start, h_start)
+            overlap_end = min(v_end, h_end)
+            overlap = (overlap_end - overlap_start).total_seconds()
+            if overlap > 0:
+                presence_seconds += overlap
+                if visitor.global_id:
+                    unique_set.add(visitor.global_id)
+
+            # Arrival count if in_time is inside this hour
+            if h_start <= visit.in_time < h_end:
+                arrivals += 1
+
+        buckets.append(
+            PresenceHourItem(
+                hour_start=h_start,
+                arrivals=arrivals,
+                presence_minutes=round(presence_seconds / 60.0, 2),
+                unique_visitors=len(unique_set),
+            )
+        )
+
+    return PresenceHourlyResponse(
+        date_utc=str(today),
+        buckets=buckets,
     )
 
 @app.post("/reset-daily")

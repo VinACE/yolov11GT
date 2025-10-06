@@ -4,10 +4,17 @@ Need to delete the log file.. peridoically..
 
 This is a minimal dashboard scaffold. Extend with zone heatmaps, journeys, charts.
 
-the user also gets the same REID second day also..>
+the user also gets the same REID second day also..> (larger release)
 
-change the DB to mongo DB after consulting with the team
-
-Also bring a reference ID picture for the graph either to hover over the box plot..
+change the DB to mongo DB after consulting with the team ---> Devi
+Ask chatgpt - which database is best for this application mango or mysql
+Also bring a reference ID picture for the graph either to hover over the box plot.. --> Devi
 
 Exclude certain ID..> larger release..>
+
+In and out time...>
+
+
+Optionally tune via environment:
+Increase REID_RERANK_ALPHA to lean more on stabilized EMA features.
+Increase REID_RERANK_MARGIN to be stricter against close ties.

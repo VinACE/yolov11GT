@@ -1,31 +1,41 @@
 {
-  "timestamp": "2025-10-06T06:58:49.954476",
-  "total_frames_processed": 3400,
+  "timestamp": "2025-10-06T10:03:12.095945",
+  "total_frames_processed": 1219,
   "frames_per_camera": {
-    "cam2": 3400
+    "cam1": 219,
+    "cam2": 500,
+    "cam3": 500
   },
   "statistics": {
-    "total_detections": 3792,
-    "new_visitors": 12,
-    "reid_matches": 3780,
+    "total_detections": 944,
+    "new_visitors": 9,
+    "reid_matches": 935,
     "cameras": [
-      "cam2"
+      "cam1",
+      "cam2",
+      "cam3"
     ]
   },
-  "reid_database_size": 13,
+  "reid_database_size": 19,
   "known_global_ids": [
-    "G1759714048_cam2_1",
-    "G1759714048_cam2_2",
-    "G1759714048_cam2_3",
-    "G1759714048_cam2_4",
-    "G1759714048_cam2_5",
-    "G1759714052_cam2_6",
-    "G1759714052_cam2_7",
-    "G1759714056_cam2_8",
-    "G1759714061_cam2_9",
-    "G1759714071_cam2_8",
-    "G1759714071_cam2_10",
-    "G1759714071_cam2_11",
-    "G1759714052_cam2_7"
+    "G1759725163_cam1_1",
+    "G1759725163_cam1_1",
+    "G1759725163_cam1_1",
+    "G1759725164_cam2_2",
+    "G1759725164_cam2_3",
+    "G1759725163_cam1_1",
+    "G1759725164_cam2_2",
+    "G1759725164_cam2_3",
+    "G1759725164_cam2_4",
+    "G1759725164_cam2_4",
+    "G1759725165_cam2_5",
+    "G1759725165_cam2_5",
+    "G1759725172_cam1_3",
+    "G1759725177_cam2_6",
+    "G1759725177_cam2_7",
+    "G1759725177_cam2_6",
+    "G1759725177_cam2_7",
+    "G1759725186_cam2_8",
+    "G1759725186_cam2_8"
   ]
 }

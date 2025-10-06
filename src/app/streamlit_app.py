@@ -186,6 +186,34 @@ def main() -> None:
     else:
         st.info("No visitors detected yet. Start the pipeline to begin tracking!")
 
+    st.markdown("---")
+    # Hourly presence analytics
+    st.subheader("🕒 Hourly Presence (Today)")
+    try:
+        import requests
+        resp = requests.get("http://localhost:8000/presence-hourly", timeout=3)
+        if resp.ok:
+            data = resp.json()
+            buckets = data.get("buckets", [])
+            if buckets:
+                ph_df = pd.DataFrame(buckets)
+                ph_df["hour"] = pd.to_datetime(ph_df["hour_start"]).dt.strftime("%H:00")
+                cols = st.columns(2)
+                with cols[0]:
+                    st.write("Presence minutes per hour")
+                    st.bar_chart(ph_df.set_index("hour")["presence_minutes"])
+                with cols[1]:
+                    st.write("Arrivals and unique visitors per hour")
+                    st.line_chart(ph_df.set_index("hour")[
+                        ["arrivals", "unique_visitors"]
+                    ])
+            else:
+                st.info("No hourly data available yet.")
+        else:
+            st.info("/presence-hourly not available yet.")
+    except Exception:
+        st.info("Unable to reach API for hourly presence.")
+
 
 if __name__ == "__main__":
     main()
