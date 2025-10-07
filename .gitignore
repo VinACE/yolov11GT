@@ -112,3 +112,4 @@ env.bak/
 venv.bak/
 **/*.pth
 
+models/fast-reid-weights/*.pth
