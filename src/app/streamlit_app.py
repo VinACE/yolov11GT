@@ -3,40 +3,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
-from sqlalchemy.orm import Session
 import pandas as pd
 import numpy as np
 import os
 from datetime import datetime, timedelta
 
-from core.storage.db import get_db, init_db
-from core.storage.models import Visitor, VisitEvent, ActivityEvent
+from core.storage.mongo import get_mongo_db
 
 
-def load_stats(db: Session):
+def load_stats_mongo(db):
     today = datetime.utcnow().date()
     start = datetime(today.year, today.month, today.day)
-
-    # Unique visitors today
-    q = (
-        db.query(Visitor.id)
-        .join(VisitEvent, VisitEvent.visitor_id == Visitor.id)
-        .filter(VisitEvent.in_time >= start)
-        .distinct()
-    )
-    unique_today = q.count()
-
-    # Active visitors with timeout
+    unique_today = len(db.visit_events.distinct("visitor_id", {"in_time": {"$gte": start}}))
     timeout_seconds = int(os.environ.get("VISITOR_TIMEOUT_SECONDS", "30"))
     cutoff = datetime.utcnow() - timedelta(seconds=timeout_seconds)
-    active = (
-        db.query(Visitor.id)
-        .join(VisitEvent, VisitEvent.visitor_id == Visitor.id)
-        .filter(VisitEvent.out_time.is_(None))
-        .filter(Visitor.last_seen_at >= cutoff)
-        .distinct()
-        .count()
-    )
+    recent_visitors = set(v["_id"] for v in db.visitors.find({"last_seen_at": {"$gte": cutoff}}, {"_id": 1}))
+    active = db.visit_events.count_documents({"out_time": None, "visitor_id": {"$in": list(recent_visitors)}})
     return active, unique_today
 
 def calculate_time_spent(entry: datetime, exit: datetime) -> str:
@@ -62,28 +44,27 @@ def main() -> None:
     st.set_page_config(page_title="Retail Analytics Dashboard", layout="wide")
     st.title("🏬 Retail Analytics Dashboard")
 
-    init_db()
-    with get_db() as db:
-        active, total_today = load_stats(db)
-        visitors = db.query(Visitor).order_by(Visitor.first_seen_at.desc()).all()
+    db = get_mongo_db()
+    active, total_today = load_stats_mongo(db)
+    visitors = list(db.visitors.find().sort("first_seen_at", -1))
 
-        # Build dwell dataframe for today
-        if visitors:
-            rows = []
-            start_day = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-            for v in visitors:
-                if v.first_seen_at >= start_day:
-                    dwell = max(0.0, (v.last_seen_at - v.first_seen_at).total_seconds())
-                    rows.append({
-                        "visitor_id": v.global_id,
-                        "first_seen_at": v.first_seen_at,
-                        "last_seen_at": v.last_seen_at,
-                        "dwell_seconds": dwell,
-                        "dwell_minutes": dwell / 60.0,
-                    })
-            dwell_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["visitor_id","first_seen_at","last_seen_at","dwell_seconds","dwell_minutes"])
-        else:
-            dwell_df = pd.DataFrame(columns=["visitor_id","first_seen_at","last_seen_at","dwell_seconds","dwell_minutes"])
+    # Build dwell dataframe for today
+    if visitors:
+        rows = []
+        start_day = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        for v in visitors:
+            if v.get("first_seen_at") and v.get("first_seen_at") >= start_day:
+                dwell = max(0.0, (v.get("last_seen_at") - v.get("first_seen_at")).total_seconds())
+                rows.append({
+                    "visitor_id": v.get("global_id"),
+                    "first_seen_at": v.get("first_seen_at"),
+                    "last_seen_at": v.get("last_seen_at"),
+                    "dwell_seconds": dwell,
+                    "dwell_minutes": dwell / 60.0,
+                })
+        dwell_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["visitor_id","first_seen_at","last_seen_at","dwell_seconds","dwell_minutes"])
+    else:
+        dwell_df = pd.DataFrame(columns=["visitor_id","first_seen_at","last_seen_at","dwell_seconds","dwell_minutes"])
 
     # Top metrics
     col1, col2, col3, col4 = st.columns(4)
@@ -133,9 +114,7 @@ def main() -> None:
         st.subheader("📈 Time Series (Today)")
         try:
             ts_df = dwell_df.set_index("first_seen_at").sort_index()
-            # Arrivals per 5 min
             arrivals = ts_df["visitor_id"].resample("5T").count().rename("arrivals")
-            # Average dwell per 5 min
             avg_dwell = ts_df["dwell_minutes"].resample("5T").mean().rename("avg_dwell_min")
             st.line_chart(pd.concat([arrivals, avg_dwell], axis=1).fillna(0))
             st.bar_chart(arrivals)
@@ -147,7 +126,6 @@ def main() -> None:
         try:
             exited = dwell_df[dwell_df["dwell_minutes"].notna()].copy()
             if len(exited) > 0:
-                # Histogram of dwell minutes (5-min bins)
                 max_minutes = exited["dwell_minutes"].max()
                 if pd.isna(max_minutes):
                     max_minutes = 0
@@ -159,7 +137,6 @@ def main() -> None:
                 st.write("Dwell time distribution (5-min bins):")
                 st.bar_chart(pd.DataFrame({"count": hist_counts}, index=bin_labels))
 
-                # Top dwellers (top 20)
                 st.write("Top dwellers (exited visitors)")
                 top = exited.sort_values("dwell_minutes", ascending=False).head(20)[["visitor_id", "dwell_minutes"]]
                 st.bar_chart(top.set_index("visitor_id"))
@@ -183,11 +160,9 @@ def main() -> None:
             st.info("/dwell-stats not available yet.")
     except Exception:
         st.info("Unable to reach API for dwell summary.")
-    else:
-        st.info("No visitors detected yet. Start the pipeline to begin tracking!")
 
-    st.markdown("---")
     # Hourly presence analytics
+    st.markdown("---")
     st.subheader("🕒 Hourly Presence (Today)")
     try:
         import requests
@@ -204,18 +179,17 @@ def main() -> None:
                     st.bar_chart(ph_df.set_index("hour")["presence_minutes"])
                 with cols[1]:
                     st.write("Arrivals and unique visitors per hour")
-                    st.line_chart(ph_df.set_index("hour")[
-                        ["arrivals", "unique_visitors"]
-                    ])
+                    st.line_chart(ph_df.set_index("hour")[["arrivals", "unique_visitors"]])
             else:
                 st.info("No hourly data available yet.")
         else:
             st.info("/presence-hourly not available yet.")
     except Exception:
         st.info("Unable to reach API for hourly presence.")
+    else:
+        st.info("No visitors detected yet. Start the pipeline to begin tracking!")
 
 
 if __name__ == "__main__":
     main()
-
 

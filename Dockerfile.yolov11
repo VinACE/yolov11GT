@@ -111,6 +111,7 @@ RUN pip install --no-cache-dir \
     apscheduler \
     streamlit \
     faiss-cpu \
+    pymongo \
     pytz
 
 # Production ReID dependencies

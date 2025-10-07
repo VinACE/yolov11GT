@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile.yolov11
     container_name: yolov11-cpu
+    depends_on:
+      - mongo
     volumes:
       - ./data:/app/data:ro
       - ./outputs:/app/outputs
@@ -16,17 +18,22 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - YOLO_VERBOSE=True
+      - USE_MONGO=1
+      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_DB=yolov11
       - FRAME_PROCESS_EVERY=5
       - VISITOR_TIMEOUT_SECONDS=15
-      - REID_SIM_THRESHOLD=0.71
-      - REID_RERANK_ALPHA=0.35
+      - REID_SIM_THRESHOLD=0.72
+      - REID_RERANK_ALPHA=0.45
       - REID_RERANK_MARGIN=0.05
-      - FEATURE_AVG_WINDOW=5
-      - MIN_CROP_HEIGHT=120
+      - FEATURE_AVG_WINDOW=7
+      - MIN_CROP_HEIGHT=140
       - SAME_CAM_CONTINUITY_SECONDS=10
       - REID_TOPK=5
-      - REID_GALLERY_TTL_SECONDS=60
+      - REID_GALLERY_TTL_SECONDS=120
       - REID_EMA_MOMENTUM=0.9
+      - HANDOFF_WINDOW_SECONDS=5
+      - HANDOFF_MARGIN=0.03
       - FASTREID_ENABLED=1
       # FastReID model selection
       # Option A: presets (msmt17_r50, market1501_r50)
@@ -38,6 +45,8 @@ services:
       - TORCHREID_IMAGE_SIZE=256x128
       - TORCHREID_PIXEL_MEAN=0.485,0.456,0.406
       - TORCHREID_PIXEL_STD=0.229,0.224,0.225
+      - HANDOFF_WINDOW_SECONDS=8
+      - HANDOFF_MARGIN=0.03
     command: tail -f /dev/null
     deploy:
       resources:
@@ -86,16 +95,11 @@ services:
       bash -lc "python /app/scripts/scheduler_reset.py"
     restart: unless-stopped
  
-  mysql:
-    image: mysql:8.0
-    container_name: yolov11-mysql
+  mongo:
+    image: mongo:6
+    container_name: yolov11-mongo
     restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: rootpassword   # 🔐 change this
-      MYSQL_DATABASE: yolov11_db
-      MYSQL_USER: yolouser
-      MYSQL_PASSWORD: yolopassword       # 🔐 change this too
     ports:
-      - "3306:3306"
+      - "27017:27017"
     volumes:
-      - ./mysql_data:/var/lib/mysql
+      - ./mongo_data:/data/db

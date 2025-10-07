@@ -11,8 +11,8 @@ from core.detection.yolo import YoloV11Detector
 from core.segmentation.sam import SamSegmenter
 from core.tracking.tracker import StrongSortLite
 from core.reid.embedding import ReidEmbedder, ReidIndex
-from core.storage.db import get_db
-from core.storage.models import Visitor, VisitEvent
+from core.storage.mongo import get_mongo_db, upsert_visitor, insert_visit_event, close_open_visit
+_mongo_db = get_mongo_db()
 
 # Try to import production ReID, fallback to stub if unavailable
 try:
@@ -86,6 +86,11 @@ class MultiCameraOrchestrator:
         self.geometry_bonus = float(os.environ.get("GEOMETRY_GATING_WEIGHT", "0.05"))
         self.geometry_penalty = float(os.environ.get("GEOMETRY_PENALTY", "0.05"))
         self._adjacency = None  # lazy loaded
+        # Cross-camera handoff relax rule
+        self.handoff_window_seconds = int(os.environ.get("HANDOFF_WINDOW_SECONDS", "5"))
+        self.handoff_margin = float(os.environ.get("HANDOFF_MARGIN", "0.03"))
+        # Track last camera used for each global id
+        self.last_camera_by_gid: Dict[str, str] = {}
         
         # Debug and logging setup
         self.debug_dir = Path(debug_dir)
@@ -251,21 +256,21 @@ class MultiCameraOrchestrator:
         # Process each detection for ReID
         processed_dets = []
         used_globals_this_frame: set[str] = set()
-        with get_db() as db:
-            for d in dets:
-                # Same-camera continuity: if same local_id seen very recently, reuse
-                prev = self.last_assignment[camera_id].get(d['local_id'])
-                if prev is not None and (dt_now - prev['ts']).total_seconds() <= self.same_cam_continuity_seconds:
-                    global_id = prev['global_id']
-                    visitor = db.query(Visitor).filter_by(global_id=global_id).first()
-                    if visitor:
-                        visitor.last_seen_at = dt_now
-                    d["global_id"] = global_id
-                    self._log_reid_assignment(camera_id, frame_num, d['local_id'], global_id, is_new=False, similarity=1.0, timestamp=dt_now)
-                    self.last_assignment[camera_id][d['local_id']] = {"global_id": global_id, "ts": dt_now}
-                    processed_dets.append(d)
-                    db.commit()
-                    continue
+        for d in dets:
+            # Same-camera continuity: if same local_id seen very recently, reuse
+            prev = self.last_assignment[camera_id].get(d['local_id'])
+            if prev is not None and (dt_now - prev['ts']).total_seconds() <= self.same_cam_continuity_seconds:
+                global_id = prev['global_id']
+                try:
+                    mv = upsert_visitor(_mongo_db, global_id, dt_now, dt_now)
+                    close_open_visit(_mongo_db, mv.get("_id"), dt_now)
+                except Exception:
+                    pass
+                d["global_id"] = global_id
+                self._log_reid_assignment(camera_id, frame_num, d['local_id'], global_id, is_new=False, similarity=1.0, timestamp=dt_now)
+                self.last_assignment[camera_id][d['local_id']] = {"global_id": global_id, "ts": dt_now}
+                processed_dets.append(d)
+                continue
 
                 # Extract crop; discard too-small crops to avoid noisy embeddings
                 crop = self._extract_crop(frame_bgr, d["bbox"])
@@ -305,8 +310,17 @@ class MultiCameraOrchestrator:
                         margin_ok = (top_score - second_score) >= self.reid_rerank_margin
                         if top_sim >= self.reid_sim_threshold and margin_ok and top_gid not in used_globals_this_frame:
                             match = (top_gid, top_sim)
+                        else:
+                            # Cross-camera handoff relax rule
+                            prev_cam = self.last_camera_by_gid.get(top_gid)
+                            if prev_cam and self._are_adjacent(prev_cam, camera_id):
+                                # time-based gating using reid_index last seen
+                                last_ts = self.reid_index.id_to_last_seen.get(top_gid, 0.0)
+                                if (dt_now.timestamp() - last_ts) <= self.handoff_window_seconds:
+                                    if (top_gid not in used_globals_this_frame) and (top_sim >= (self.reid_sim_threshold - self.handoff_margin)):
+                                        match = (top_gid, top_sim)
 
-                if match is None or (match is not None and match[1] < self.reid_sim_threshold):
+                if match is None or (match is not None and match[1] < (self.reid_sim_threshold - self.handoff_margin)):
                     # New visitor detected
                     global_id = f"G{dt_now.timestamp():.0f}_{camera_id}_{d['local_id']}"
                     # If we have a valid averaged embedding, add to index
@@ -319,16 +333,17 @@ class MultiCameraOrchestrator:
                         is_new=True, similarity=0.0, timestamp=dt_now
                     )
                     
-                    visitor = Visitor(global_id=global_id, first_seen_at=dt_now, last_seen_at=dt_now)
-                    db.add(visitor)
-                    db.flush()
-                    visit = VisitEvent(visitor_id=visitor.id, camera_id=camera_id, in_time=dt_now)
-                    db.add(visit)
+                    try:
+                        mv = upsert_visitor(_mongo_db, global_id, dt_now, dt_now)
+                        insert_visit_event(_mongo_db, mv.get("_id"), camera_id, dt_now, global_id=global_id)
+                    except Exception:
+                        pass
                     
                     d["global_id"] = global_id
                     print(f"🆕 NEW visitor: {global_id} (cam={camera_id}, local_id={d['local_id']})")
                     # Cache assignment
                     self.last_assignment[camera_id][d['local_id']] = {"global_id": global_id, "ts": dt_now}
+                    self.last_camera_by_gid[global_id] = camera_id
                 else:
                     # Existing visitor - ReID match
                     global_id = match[0]
@@ -340,17 +355,10 @@ class MultiCameraOrchestrator:
                         is_new=False, similarity=similarity, timestamp=dt_now
                     )
                     
-                    visitor = db.query(Visitor).filter_by(global_id=global_id).first()
-                    if visitor:
-                        visitor.last_seen_at = dt_now
-                        # Update the most recent open visit event for this visitor
-                        open_visit = db.query(VisitEvent).filter(
-                            VisitEvent.visitor_id == visitor.id,
-                            VisitEvent.out_time.is_(None)
-                        ).first()
-                        if open_visit:
-                            # Still in premises, keep updating last_seen
-                            pass
+                    try:
+                        upsert_visitor(_mongo_db, global_id, dt_now, dt_now)
+                    except Exception:
+                        pass
                     
                     d["global_id"] = global_id
                     print(f"🔄 REID match: {global_id} (cam={camera_id}, local_id={d['local_id']}, sim={similarity:.3f})")
@@ -361,9 +369,9 @@ class MultiCameraOrchestrator:
                     used_globals_this_frame.add(global_id)
                     # Cache assignment
                     self.last_assignment[camera_id][d['local_id']] = {"global_id": global_id, "ts": dt_now}
+                    self.last_camera_by_gid[global_id] = camera_id
                 
                 processed_dets.append(d)
-                db.commit()
 
         # Append a row for each detection in this frame
         try:
@@ -425,6 +433,16 @@ class MultiCameraOrchestrator:
                 return -self.geometry_penalty
         except Exception:
             return 0.0
+
+    def _are_adjacent(self, cam_a: str, cam_b: str) -> bool:
+        try:
+            self._load_geometry()
+            if not self._adjacency:
+                return True  # if no config, do not block handoff
+            neighbors = set(self._adjacency.get(cam_b, []))
+            return cam_a in neighbors
+        except Exception:
+            return True
     
     def _save_summary(self) -> None:
         """Save summary statistics to file"""
@@ -446,24 +464,10 @@ class MultiCameraOrchestrator:
         """Mark visits as exited if their visitor hasn't been seen within timeout window."""
         cutoff = datetime.utcnow() - timedelta(seconds=self.timeout_seconds)
         try:
-            with get_db() as db:
-                # Find visitors with open visits but last_seen before cutoff
-                stale = (
-                    db.query(Visitor)
-                    .join(VisitEvent, VisitEvent.visitor_id == Visitor.id)
-                    .filter(VisitEvent.out_time.is_(None))
-                    .filter(Visitor.last_seen_at < cutoff)
-                    .all()
-                )
-                for v in stale:
-                    open_visit = (
-                        db.query(VisitEvent)
-                        .filter(VisitEvent.visitor_id == v.id, VisitEvent.out_time.is_(None))
-                        .first()
-                    )
-                    if open_visit:
-                        open_visit.out_time = v.last_seen_at
-                db.commit()
+            # Close any open visit if last_seen is older than cutoff
+            old_ids = [v["_id"] for v in _mongo_db.visitors.find({"last_seen_at": {"$lt": cutoff}}, {"_id": 1})]
+            if old_ids:
+                _mongo_db.visit_events.update_many({"visitor_id": {"$in": old_ids}, "out_time": None}, {"$set": {"out_time": datetime.utcnow()}})
         except Exception:
             pass
 

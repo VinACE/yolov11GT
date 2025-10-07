@@ -16,6 +16,12 @@ if ! docker ps | grep -q yolov11-cpu; then
     sleep 3
 fi
 
+# Clean database and outputs at start for a fresh run
+echo "🧹 Cleaning MongoDB 'yolov11' and clearing /app/outputs..."
+docker exec -i yolov11-mongo mongosh --quiet --eval "db.getSiblingDB('yolov11').dropDatabase()" || true
+docker-compose -f $COMPOSE_FILE exec -T yolov11 bash -lc "rm -rf /app/outputs/* || true; mkdir -p /app/outputs" || true
+echo "✅ Cleanup done."
+
 # Menu
 echo "Select service to run:"
 echo "1) FastAPI Backend (port 8000)"
@@ -52,13 +58,9 @@ case $choice in
         echo "🧪 Running Quick Test..."
         docker-compose -f $COMPOSE_FILE exec yolov11 python3 -c "
 from src.core.detection.yolo import YoloV11Detector
-from src.core.storage.db import init_db, get_db
-from src.core.storage.models import Visitor, VisitEvent
+from src.core.storage.mongo import get_mongo_db, upsert_visitor, insert_visit_event
 from datetime import datetime
 import numpy as np
-
-print('Initializing database...')
-init_db()
 
 print('Testing YOLOv11 detector...')
 detector = YoloV11Detector()
@@ -66,12 +68,11 @@ dummy_frame = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
 detections = detector.detect(dummy_frame)
 print(f'✅ Detector working! Found {len(detections)} detections')
 
-print('Testing database connection...')
-with get_db() as db:
-    visitor = Visitor(global_id='TEST_001', first_seen_at=datetime.utcnow(), last_seen_at=datetime.utcnow())
-    db.add(visitor)
-    db.commit()
-    print('✅ Database working! Test visitor created')
+print('Testing MongoDB connection...')
+db = get_mongo_db()
+mv = upsert_visitor(db, 'TEST_001', datetime.utcnow(), datetime.utcnow())
+insert_visit_event(db, mv.get('_id'), 'test_cam', datetime.utcnow(), global_id='TEST_001')
+print('✅ MongoDB working! Test visitor/event created')
 
 print('')
 print('🎉 All tests passed! System is ready.')
