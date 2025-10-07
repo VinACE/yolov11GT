@@ -113,3 +113,8 @@ venv.bak/
 **/*.pth
 
 models/fast-reid-weights/*.pth
+# Exclude MongoDB data files and directories
+mongo_data/
+
+# Exclude compilation/runtime artifacts
+outputs/
