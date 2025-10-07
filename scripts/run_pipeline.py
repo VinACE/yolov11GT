@@ -9,11 +9,15 @@ from core.pipeline.multicam import MultiCameraOrchestrator
 
 def main() -> None:
     # Example sources; replace with RTSP/HTTP files as needed
-    # NOTE: Sample.mp4 and SampleGT.mp4 are IDENTICAL (same MD5), so using only Sample.mp4 for cam2
+    # NOTE: Sample.mp4 and SampleGT.mp4 are IDENTICAL videos (same MD5)
+    # Using all 3 to simulate real multi-camera environment
+    # ReID should match same people across cam2 and cam3 since they're identical
+    # Expected unique count: 11-12 people (cam2 & cam3 should merge to same IDs)
     cameras = {
         "cam1": "/app/data/demo3.mp4",
         "cam2": "/app/data/Sample.mp4",
-        "cam3": "/app/data/SampleGT.mp4",  # Disabled - duplicate of Sample.mp4
+        "cam3": "/app/data/SampleGT.mp4",
+        "cam4": "/app/data/demo3.mp4"
     }
 
     # Initialize with OSNet ReID for production (set use_osnet=False to use stub)

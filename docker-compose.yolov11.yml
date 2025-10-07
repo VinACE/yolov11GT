@@ -21,13 +21,13 @@ services:
       - USE_MONGO=1
       - MONGO_URI=mongodb://mongo:27017
       - MONGO_DB=yolov11
-      - FRAME_PROCESS_EVERY=24
+      - FRAME_PROCESS_EVERY=30
       - VISITOR_TIMEOUT_SECONDS=15
-      # ReID Matching Parameters (Fine-tuned for FastREID MSMT17)
-      - REID_SIM_THRESHOLD=0.68
-      - REID_RERANK_ALPHA=0.50
+      # ReID Matching Parameters (Optimized for OSNet x0.75)
+      - REID_SIM_THRESHOLD=0.65
+      - REID_RERANK_ALPHA=0.40
       - REID_RERANK_MARGIN=0.04
-      - FEATURE_AVG_WINDOW=10
+      - FEATURE_AVG_WINDOW=8
       - MIN_CROP_HEIGHT=120
       - SAME_CAM_CONTINUITY_SECONDS=10
       - REID_TOPK=5
@@ -40,7 +40,8 @@ services:
       # ✅ Python 3.11 compatible with compatibility shim in fastreid_embedder.py
       # MSMT17: Better cross-domain generalization (294MB, 2048-dim)
       # Market1501: Retail-focused (288MB, 2048-dim)
-      - FASTREID_ENABLED=1
+      # NOTE: FastREID is slow on CPU (~100-150ms/person). Using OSNet for real-time.
+      - FASTREID_ENABLED=0
       # Switch between: msmt17_r50 or market1501_r50
       - FASTREID_PRESET=msmt17_r50
       # OSNet fallback config (unused when FastReID enabled)
