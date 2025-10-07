@@ -82,6 +82,91 @@ def main() -> None:
 
     st.markdown("---")
     
+    # Entry/Exit Balance Monitor
+    st.subheader("🚪 Entry/Exit Balance Monitor")
+    try:
+        today = datetime.utcnow().date()
+        start = datetime(today.year, today.month, today.day)
+        all_visits = list(db.visit_events.find({"in_time": {"$gte": start}}))
+        
+        total_entries = len(all_visits)
+        total_exits = len([v for v in all_visits if v.get('out_time') is not None])
+        currently_inside = total_entries - total_exits
+        balance_ratio = total_exits / total_entries if total_entries > 0 else 0
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("📥 Entries", total_entries)
+        col2.metric("📤 Exits", total_exits)
+        col3.metric("👤 Inside Now", currently_inside)
+        
+        if 0.85 <= balance_ratio <= 1.15:
+            balance_status = "🟢 Normal"
+        elif balance_ratio < 0.85:
+            balance_status = "🟡 More Entries"
+            st.warning(f"⚠️ {currently_inside} people may still be inside")
+        else:
+            balance_status = "🔴 Imbalanced"
+            st.error("⚠️ More exits than entries - check system!")
+        
+        col4.metric("⚖️ Balance", f"{balance_ratio:.1%}", delta=balance_status)
+    except Exception as e:
+        st.info(f"Entry/Exit balance: {e}")
+    
+    # Camera Health Monitor
+    st.markdown("---")
+    st.subheader("📹 Camera Health Status")
+    try:
+        import requests
+        resp = requests.get("http://localhost:8000/system/camera-health", timeout=3)
+        if resp.ok:
+            health_data = resp.json()
+            st.write(f"**{health_data['overall_status']}**")
+            
+            if health_data['cameras']:
+                cols = st.columns(len(health_data['cameras']))
+                for idx, cam in enumerate(health_data['cameras']):
+                    with cols[idx]:
+                        st.metric(f"📷 {cam['camera_id']}", cam['status'])
+                        st.caption(f"Last: {cam['last_detection']}")
+                        st.caption(f"Recent: {cam['detections_last_5min']}")
+                        st.caption(f"ReID: {cam['reid_match_rate']:.0%}")
+        else:
+            st.info("Camera health API unavailable")
+    except Exception as e:
+        st.info(f"Camera health: {e}")
+    
+    # Peak Hours Analysis
+    st.markdown("---")
+    st.subheader("⏰ Peak Hours Analysis")
+    try:
+        import requests
+        resp = requests.get("http://localhost:8000/analytics/peak-hours", timeout=3)
+        if resp.ok:
+            peak_data = resp.json()
+            peak_df = pd.DataFrame(peak_data['peak_hours'])
+            
+            if not peak_df.empty and peak_df['visitor_count'].sum() > 0:
+                peak_df = peak_df.set_index('hour')
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("🔥 Busiest Hour", peak_data['busiest_hour'])
+                col2.metric("😴 Quietest Hour", peak_data['quietest_hour'])
+                col3.metric("Peak Visitors", int(peak_df['visitor_count'].max()))
+                
+                st.write("**Visitor Arrivals by Hour**")
+                st.bar_chart(peak_df['visitor_count'])
+                
+                st.write("**Average Dwell Time by Hour (minutes)**")
+                st.line_chart(peak_df['avg_dwell_minutes'])
+            else:
+                st.info("No peak hour data yet")
+        else:
+            st.info("Peak hours API unavailable")
+    except Exception as e:
+        st.info(f"Peak hours: {e}")
+    
+    st.markdown("---")
+    
     # Visitor time spent table
     st.subheader("⏰ Time Spent by Each Visitor (ReID-based)")
     
