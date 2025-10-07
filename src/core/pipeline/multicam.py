@@ -30,36 +30,37 @@ class MultiCameraOrchestrator:
         self.segmenter = SamSegmenter()
         self.tracker_by_cam = {cid: StrongSortLite() for cid in camera_sources}
         
-        # Initialize ReID embedder - priority: FastReID > OSNet > stub
+        # Initialize ReID embedder - priority: FastReID (if enabled) > OSNet > stub
         embedder_loaded = False
-        
-        # Try FastReID first if explicitly enabled
         fastreid_enabled = os.environ.get("FASTREID_ENABLED", "0") == "1"
+        
+        # PRIORITY 1: Try FastReID if explicitly enabled (overrides use_osnet flag)
         if fastreid_enabled:
             try:
                 from core.reid.fastreid_embedder import FastReIDEmbedder
                 fre = FastReIDEmbedder()
-                if fre.predictor is not None:  # Real model loaded
+                if fre.predictor is not None and fre.enabled:  # Real model loaded successfully
                     self.embedder = fre
                     embedder_loaded = True
+                    print(f"✅ Using FastREID ReID (preset={os.environ.get('FASTREID_PRESET', 'unknown')})")
                 else:
-                    print("⚠️  FastReID enabled but model failed to load, trying fallbacks")
+                    print("⚠️  FastREID enabled but model failed to load, trying fallbacks")
             except Exception as e:
-                print(f"⚠️  FastReID load error: {e}, trying fallbacks")
+                print(f"⚠️  FastREID load error: {e}, trying fallbacks")
         
-        # Fall back to OSNet if FastReID not loaded
+        # PRIORITY 2: Fall back to OSNet if FastReID not loaded
         if not embedder_loaded and use_osnet and OSNET_AVAILABLE:
             try:
                 self.embedder = OSNetReIDEmbedder()
-                print("✅ Using OSNet production ReID (appearance-based)")
+                print("✅ Using OSNet production ReID (512-dim, CPU-optimized)")
                 embedder_loaded = True
             except Exception as e:
                 print(f"⚠️  OSNet failed to load: {e}")
         
-        # Final fallback to stub embedder
+        # PRIORITY 3: Final fallback to stub embedder
         if not embedder_loaded:
             self.embedder = ReidEmbedder()
-            print("ℹ️  Using stub ReID embedder (random features)")
+            print("⚠️  Using stub ReID embedder (random features - NOT for production)")
         
         # Initialize ReID index with the embedding dimensionality
         embed_dim = getattr(self.embedder, "dim", 256)

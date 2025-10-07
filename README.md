@@ -138,3 +138,4 @@ sequenceDiagram
     end
     Note over API,ST: ST queries MongoDB directly for metrics
 ```
+mongodb://admin:admin123@localhost:27018/yolov11_db?authSource=admin

@@ -21,25 +21,27 @@ services:
       - USE_MONGO=1
       - MONGO_URI=mongodb://mongo:27017
       - MONGO_DB=yolov11
-      - FRAME_PROCESS_EVERY=5
+      - FRAME_PROCESS_EVERY=24
       - VISITOR_TIMEOUT_SECONDS=15
-      # ReID Matching Parameters
-      - REID_SIM_THRESHOLD=0.72
-      - REID_RERANK_ALPHA=0.45
-      - REID_RERANK_MARGIN=0.05
-      - FEATURE_AVG_WINDOW=7
-      - MIN_CROP_HEIGHT=140
+      # ReID Matching Parameters (Fine-tuned for FastREID MSMT17)
+      - REID_SIM_THRESHOLD=0.68
+      - REID_RERANK_ALPHA=0.50
+      - REID_RERANK_MARGIN=0.04
+      - FEATURE_AVG_WINDOW=10
+      - MIN_CROP_HEIGHT=120
       - SAME_CAM_CONTINUITY_SECONDS=10
       - REID_TOPK=5
-      - REID_GALLERY_TTL_SECONDS=120
+      - REID_GALLERY_TTL_SECONDS=3600
       - REID_EMA_MOMENTUM=0.9
       # Cross-Camera Handoff
       - HANDOFF_WINDOW_SECONDS=8
       - HANDOFF_MARGIN=0.03
-      # FastReID Configuration (MSMT17 R50 for better generalization)
-      # NOTE: FastReID has Python 3.11 compatibility issues with yacs/collections
-      # Using OSNet for now (CPU-optimized, working). Switch to FastReID when using GPU or Python 3.9
-      - FASTREID_ENABLED=0
+      # FastReID Configuration (MSMT17 R50 or Market1501 R50)
+      # ✅ Python 3.11 compatible with compatibility shim in fastreid_embedder.py
+      # MSMT17: Better cross-domain generalization (294MB, 2048-dim)
+      # Market1501: Retail-focused (288MB, 2048-dim)
+      - FASTREID_ENABLED=1
+      # Switch between: msmt17_r50 or market1501_r50
       - FASTREID_PRESET=msmt17_r50
       # OSNet fallback config (unused when FastReID enabled)
       - TORCHREID_MODEL_NAME=osnet_x0_75

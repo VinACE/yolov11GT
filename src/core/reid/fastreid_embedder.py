@@ -3,6 +3,19 @@ import cv2
 import os
 import torch
 from pathlib import Path
+import sys
+
+# Python 3.11 compatibility shim for collections.abc
+# The yacs library and some parts of FastREID expect OrderedDict in collections.abc
+# but it's actually in collections in Python 3.11
+if sys.version_info >= (3, 10):
+    import collections
+    import collections.abc
+    # Patch collections.abc to include items that were moved from collections
+    if not hasattr(collections.abc, 'OrderedDict'):
+        collections.abc.OrderedDict = collections.OrderedDict
+    if not hasattr(collections.abc, 'Callable'):
+        collections.abc.Callable = collections.abc.Callable if hasattr(collections.abc, 'Callable') else type(lambda: None)
 
 class FastReIDEmbedder:
     """FastReID wrapper for person re-identification.
@@ -82,8 +95,12 @@ class FastReIDEmbedder:
             
         except Exception as e:
             print(f"⚠️  FastReID load failed: {e}")
-            print("   Falling back to random embeddings for testing")
+            print(f"   Config: {self.config_path}")
+            print(f"   Weights: {self.weights_path}")
+            import traceback
+            traceback.print_exc()
             self.enabled = False
+            self.predictor = None
 
     def embed(self, crop_bgr: np.ndarray) -> np.ndarray:
         if not self.enabled or self.predictor is None:
@@ -95,13 +112,29 @@ class FastReIDEmbedder:
         
         # Real FastReID inference
         try:
-            # FastReID expects BGR input
-            features = self.predictor(crop_bgr)
-            # Extract features and normalize
+            # Convert BGR numpy to RGB tensor (FastReID's DefaultPredictor expects tensor input)
+            crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+            # Convert to torch tensor: HWC -> CHW, add batch dimension
+            crop_tensor = torch.from_numpy(crop_rgb).permute(2, 0, 1).unsqueeze(0).float()
+            
+            # Run inference
+            features = self.predictor(crop_tensor)
+            
+            # Extract features based on type
             if isinstance(features, torch.Tensor):
                 vec = features.cpu().numpy().flatten()
+            elif isinstance(features, np.ndarray):
+                vec = features.flatten()
             else:
-                vec = np.array(features).flatten()
+                # Handle dict output from some FastReID models
+                if isinstance(features, dict) and 'features' in features:
+                    feat = features['features']
+                    if isinstance(feat, torch.Tensor):
+                        vec = feat.cpu().numpy().flatten()
+                    else:
+                        vec = np.array(feat).flatten()
+                else:
+                    vec = np.array(features).flatten()
             
             # L2 normalize
             norm = np.linalg.norm(vec)

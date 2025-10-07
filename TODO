@@ -18,3 +18,12 @@ In and out time...>
 Optionally tune via environment:
 Increase REID_RERANK_ALPHA to lean more on stabilized EMA features.
 Increase REID_RERANK_MARGIN to be stricter against close ties.
+
+Male Female addition..
+################
+The real question: Are you testing with looping videos, or do you expect the system to recognize it's the same video loop and merge IDs?
+For testing/demo purposes with looping videos, you'd want to either:
+Disable gallery TTL (REID_GALLERY_TTL_SECONDS=0 or very high like 3600)
+Use non-looping videos for accurate unique counts
+Count unique local_ids per camera instead of global_ids
+Which approach do you prefer?
