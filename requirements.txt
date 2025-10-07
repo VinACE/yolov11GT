@@ -41,8 +41,6 @@ webdataset
 # Backend & Storage
 fastapi
 uvicorn
-SQLAlchemy
-alembic
 apscheduler
 streamlit
 faiss-cpu

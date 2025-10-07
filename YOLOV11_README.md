@@ -181,3 +181,6 @@ model = YOLO('yolo11n.pt')
 results = model('/app/data/video.mp4')
 results[0].save('/app/outputs/result_video.mp4')
 ```
+
+### Model zoo
+https://github.com/KaiyangZhou/deep-person-reid/blob/master/docs/MODEL_ZOO.md

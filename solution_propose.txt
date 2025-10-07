@@ -49,7 +49,7 @@ Step 4: Integrate All Components
         ◦ Use the bounding box coordinates and the global ID to determine when a person enters or leaves these predefined zones.
         ◦ For the entire time calculation, you can timestamp the creation of a new global ID ("In Time") and the timestamp when it is no longer detected by any camera for a certain period ("Out Time"). The difference is the total time spent in the premises.
         ◦ For activity-based time, calculate the total time a specific ID's bounding box intersects with a specific area of interest.
-Step 5: Data and Analytics Dashboard – can have data pulled from mysql database.. front-end can be  steamlit for now later we will convert to react.
+Step 5: Data and Analytics Dashboard – data is stored in MongoDB and visualized via Streamlit dashboard (can be converted to React later).
 
 Store the "in" and "out" timestamps, global IDs, and activity-based duration data in a database.
     • Develop a user interface or dashboard to visualize the data, showing metrics like:

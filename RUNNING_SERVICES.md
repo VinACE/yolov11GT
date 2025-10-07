@@ -10,7 +10,7 @@
 | **FastAPI Docs** | ✅ RUNNING | http://localhost:8000/docs | Interactive API Docs |
 | **Streamlit** | ✅ RUNNING | http://localhost:8501 | Analytics Dashboard |
 | **YOLOv11** | ✅ READY | - | Person Detection |
-| **SQLite DB** | ✅ READY | /app/analytics.db | Data Storage |
+| **MongoDB** | ✅ RUNNING | mongodb://mongo:27017 | Data Storage |
 
 ---
 
@@ -149,22 +149,25 @@ docker-compose -f docker-compose.yolov11.yml exec yolov11 ps aux | grep -E "uvic
 
 ## 📊 Database Location
 
-Your SQLite database is stored at:
+Your MongoDB database is running at:
 ```
-/app/analytics.db
+mongodb://mongo:27017/yolov11
 ```
 
-Inside the container, you can query it:
+Query the database from inside the container:
 ```bash
-docker-compose -f docker-compose.yolov11.yml exec yolov11 python3 -c "
-from src.core.storage.db import get_db
-from src.core.storage.models import Visitor, VisitEvent
+# Using MongoDB shell
+docker exec yolov11-mongo mongosh yolov11 --eval "db.visitors.countDocuments({})"
 
-with get_db() as db:
-    visitors = db.query(Visitor).all()
-    print(f'Total visitors in DB: {len(visitors)}')
-    for v in visitors[:5]:
-        print(f'  - {v.global_id}: {v.first_seen_at} to {v.last_seen_at}')
+# Using Python
+docker-compose -f docker-compose.yolov11.yml exec yolov11 python3 -c "
+from src.core.storage.mongo import get_mongo_db
+
+db = get_mongo_db()
+visitors = list(db.visitors.find().limit(5))
+print(f'Total visitors in DB: {db.visitors.count_documents({})}')
+for v in visitors:
+    print(f'  - {v[\"global_id\"]}: {v[\"first_seen_at\"]} to {v[\"last_seen_at\"]}')
 "
 ```
 
@@ -183,12 +186,12 @@ with get_db() as db:
 
 ## ✅ System Components Verified
 
-- [x] Docker container built and running
+- [x] Docker containers built and running
+- [x] MongoDB database initialized
 - [x] YOLOv11 detector operational
-- [x] SAM segmenter stub ready
-- [x] Single-camera tracker ready
-- [x] ReID module with FAISS ready
-- [x] SQLAlchemy database initialized
+- [x] SAM segmenter operational
+- [x] StrongSORT tracker with appearance features
+- [x] OSNet ReID module with FAISS index
 - [x] FastAPI service running
 - [x] Streamlit dashboard running
 - [x] All dependencies installed

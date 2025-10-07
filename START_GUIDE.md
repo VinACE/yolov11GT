@@ -115,7 +115,7 @@ with get_db() as db:
 | FastAPI | http://localhost:8000 | REST API |
 | FastAPI Docs | http://localhost:8000/docs | Interactive API documentation |
 | Streamlit | http://localhost:8501 | Dashboard UI |
-| MySQL | localhost:3306 | Database (if using MySQL) |
+| MongoDB | mongodb://localhost:27017 | Database |
 
 ## 🔧 Troubleshooting
 
@@ -138,8 +138,11 @@ docker-compose -f docker-compose.yolov11.yml exec yolov11 bash -c "export PYTHON
 
 ### Database errors
 ```bash
-# Reinitialize database
-docker-compose -f docker-compose.yolov11.yml exec yolov11 python3 -c "from src.core.storage.db import init_db; init_db(); print('DB initialized')"
+# Check MongoDB connection
+docker exec yolov11-mongo mongosh yolov11 --eval "db.stats()"
+
+# Check collections
+docker exec yolov11-mongo mongosh yolov11 --eval "db.getCollectionNames()"
 ```
 
 ## 🛑 Stop Everything
@@ -154,19 +157,22 @@ docker-compose -f docker-compose.yolov11.yml down -v
 
 ## 📝 Next Steps
 
-1. **Replace stubs with production models:**
-   - `src/core/segmentation/sam.py` - Add real SAM model
-   - `src/core/tracking/tracker.py` - Integrate DeepSORT/ByteTrack
-   - `src/core/reid/embedding.py` - Use trained ReID model
+1. **Fine-tune ReID parameters:**
+   - Adjust `REID_SIM_THRESHOLD` in docker-compose for your environment
+   - Monitor ReID logs in `/app/outputs/debug/reid_assignment_log.jsonl`
+   - Tune `FEATURE_AVG_WINDOW` and `MIN_CROP_HEIGHT` for accuracy
 
 2. **Add zone definitions:**
    - Edit `src/core/pipeline/multicam.py`
    - Define polygons for store zones (entrance, checkout, etc.)
+   - Implement zone-based dwell time analytics
 
 3. **Enhance dashboard:**
    - Edit `src/app/streamlit_app.py`
-   - Add charts, heatmaps, customer journey visualization
+   - Add real-time heatmaps and customer journey visualization
+   - Display per-camera and per-zone analytics
 
-4. **Switch to MySQL (optional):**
-   - Update `src/core/storage/db.py` to use MySQL connection
-   - Use credentials from docker-compose MySQL service
+4. **Scale your deployment:**
+   - Add more cameras to `scripts/run_pipeline.py`
+   - Set up load balancing for multiple pipeline instances
+   - Configure MongoDB replication for high availability

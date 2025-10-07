@@ -23,6 +23,7 @@ services:
       - MONGO_DB=yolov11
       - FRAME_PROCESS_EVERY=5
       - VISITOR_TIMEOUT_SECONDS=15
+      # ReID Matching Parameters
       - REID_SIM_THRESHOLD=0.72
       - REID_RERANK_ALPHA=0.45
       - REID_RERANK_MARGIN=0.05
@@ -32,21 +33,19 @@ services:
       - REID_TOPK=5
       - REID_GALLERY_TTL_SECONDS=120
       - REID_EMA_MOMENTUM=0.9
-      - HANDOFF_WINDOW_SECONDS=5
+      # Cross-Camera Handoff
+      - HANDOFF_WINDOW_SECONDS=8
       - HANDOFF_MARGIN=0.03
-      - FASTREID_ENABLED=1
-      # FastReID model selection
-      # Option A: presets (msmt17_r50, market1501_r50)
+      # FastReID Configuration (MSMT17 R50 for better generalization)
+      # NOTE: FastReID has Python 3.11 compatibility issues with yacs/collections
+      # Using OSNet for now (CPU-optimized, working). Switch to FastReID when using GPU or Python 3.9
+      - FASTREID_ENABLED=0
       - FASTREID_PRESET=msmt17_r50
-      # Option B: explicit paths (override preset if set)
-      # - FASTREID_CONFIG=/app/models/fast-reid-configs/msmt17/bagtricks_R50.yml
-      # - FASTREID_WEIGHTS=/app/models/fast-reid-weights/msmt17/bagtricks_R50.pth
+      # OSNet fallback config (unused when FastReID enabled)
       - TORCHREID_MODEL_NAME=osnet_x0_75
       - TORCHREID_IMAGE_SIZE=256x128
       - TORCHREID_PIXEL_MEAN=0.485,0.456,0.406
       - TORCHREID_PIXEL_STD=0.229,0.224,0.225
-      - HANDOFF_WINDOW_SECONDS=8
-      - HANDOFF_MARGIN=0.03
     command: tail -f /dev/null
     deploy:
       resources:

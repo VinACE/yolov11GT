@@ -30,31 +30,36 @@ class MultiCameraOrchestrator:
         self.segmenter = SamSegmenter()
         self.tracker_by_cam = {cid: StrongSortLite() for cid in camera_sources}
         
-        # Initialize ReID embedder - prefer FastReID if enabled, else OSNet, else stub
-        if use_osnet and OSNET_AVAILABLE:
+        # Initialize ReID embedder - priority: FastReID > OSNet > stub
+        embedder_loaded = False
+        
+        # Try FastReID first if explicitly enabled
+        fastreid_enabled = os.environ.get("FASTREID_ENABLED", "0") == "1"
+        if fastreid_enabled:
+            try:
+                from core.reid.fastreid_embedder import FastReIDEmbedder
+                fre = FastReIDEmbedder()
+                if fre.predictor is not None:  # Real model loaded
+                    self.embedder = fre
+                    embedder_loaded = True
+                else:
+                    print("⚠️  FastReID enabled but model failed to load, trying fallbacks")
+            except Exception as e:
+                print(f"⚠️  FastReID load error: {e}, trying fallbacks")
+        
+        # Fall back to OSNet if FastReID not loaded
+        if not embedder_loaded and use_osnet and OSNET_AVAILABLE:
             try:
                 self.embedder = OSNetReIDEmbedder()
                 print("✅ Using OSNet production ReID (appearance-based)")
+                embedder_loaded = True
             except Exception as e:
                 print(f"⚠️  OSNet failed to load: {e}")
-                print("   Falling back to stub ReID embedder")
-                self.embedder = ReidEmbedder()
-        else:
+        
+        # Final fallback to stub embedder
+        if not embedder_loaded:
             self.embedder = ReidEmbedder()
-            if not use_osnet:
-                print("ℹ️  Using stub ReID embedder (use_osnet=False)")
-            else:
-                print("ℹ️  Using stub ReID embedder (OSNet not available)")
-
-        # Try FastReID if explicitly enabled
-        try:
-            from core.reid.fastreid_embedder import FastReIDEmbedder
-            fre = FastReIDEmbedder()
-            if getattr(fre, 'enabled', False):
-                self.embedder = fre
-                print("✅ Using FastReID embedder")
-        except Exception as e:
-            print(f"ℹ️  FastReID not enabled/available: {e}")
+            print("ℹ️  Using stub ReID embedder (random features)")
         
         # Initialize ReID index with the embedding dimensionality
         embed_dim = getattr(self.embedder, "dim", 256)
@@ -272,104 +277,104 @@ class MultiCameraOrchestrator:
                 processed_dets.append(d)
                 continue
 
-                # Extract crop; discard too-small crops to avoid noisy embeddings
-                crop = self._extract_crop(frame_bgr, d["bbox"])
-                if crop.size == 0 or crop.shape[0] < self.min_crop_height:
-                    # Skip ReID; treat as no match to avoid false positives
-                    match = None
-                    emb_avg = None
-                else:
-                    emb = self.embedder.embed(crop)
-                    # Attach current single-frame emb for StrongSortLite association
-                    d["emb"] = emb
-                    # Buffer features per local track and average
-                    buf = self.feature_buffers[camera_id][d['local_id']]
-                    buf.append(emb)
-                    emb_avg = np.mean(np.stack(list(buf)), axis=0).astype(np.float32)
-                    # Top-k candidate search with TTL filtering
-                    topk = int(os.environ.get("REID_TOPK", "5"))
-                    candidates = self.reid_index.search_topk(emb_avg, topk=topk, now_ts=dt_now.timestamp())
-                    # Cosine-margin reranking against per-ID EMA feature
-                    match = None
-                    if candidates:
-                        q = emb_avg / (np.linalg.norm(emb_avg) + 1e-8)
-                        alpha = self.reid_rerank_alpha
-                        scored = []
-                        for gid, sim in candidates:
-                            ema = self.reid_index.id_to_ema.get(gid)
-                            sim_ema = float(np.dot(q, ema)) if ema is not None else sim
-                            composite = (1.0 - alpha) * sim + alpha * sim_ema
-                            # Apply soft geometry gating if available
-                            composite += self._geometry_delta(camera_id, gid, dt_now)
-                            scored.append((gid, sim, composite))
-                        # sort by composite score desc
-                        scored.sort(key=lambda x: x[2], reverse=True)
-                        # apply per-frame uniqueness and thresholds with margin
-                        top_gid, top_sim, top_score = scored[0]
-                        second_score = scored[1][2] if len(scored) > 1 else -1.0
-                        margin_ok = (top_score - second_score) >= self.reid_rerank_margin
-                        if top_sim >= self.reid_sim_threshold and margin_ok and top_gid not in used_globals_this_frame:
-                            match = (top_gid, top_sim)
-                        else:
-                            # Cross-camera handoff relax rule
-                            prev_cam = self.last_camera_by_gid.get(top_gid)
-                            if prev_cam and self._are_adjacent(prev_cam, camera_id):
-                                # time-based gating using reid_index last seen
-                                last_ts = self.reid_index.id_to_last_seen.get(top_gid, 0.0)
-                                if (dt_now.timestamp() - last_ts) <= self.handoff_window_seconds:
-                                    if (top_gid not in used_globals_this_frame) and (top_sim >= (self.reid_sim_threshold - self.handoff_margin)):
-                                        match = (top_gid, top_sim)
+            # Extract crop; discard too-small crops to avoid noisy embeddings
+            crop = self._extract_crop(frame_bgr, d["bbox"])
+            if crop.size == 0 or crop.shape[0] < self.min_crop_height:
+                # Skip ReID; treat as no match to avoid false positives
+                match = None
+                emb_avg = None
+            else:
+                emb = self.embedder.embed(crop)
+                # Attach current single-frame emb for StrongSortLite association
+                d["emb"] = emb
+                # Buffer features per local track and average
+                buf = self.feature_buffers[camera_id][d['local_id']]
+                buf.append(emb)
+                emb_avg = np.mean(np.stack(list(buf)), axis=0).astype(np.float32)
+                # Top-k candidate search with TTL filtering
+                topk = int(os.environ.get("REID_TOPK", "5"))
+                candidates = self.reid_index.search_topk(emb_avg, topk=topk, now_ts=dt_now.timestamp())
+                # Cosine-margin reranking against per-ID EMA feature
+                match = None
+                if candidates:
+                    q = emb_avg / (np.linalg.norm(emb_avg) + 1e-8)
+                    alpha = self.reid_rerank_alpha
+                    scored = []
+                    for gid, sim in candidates:
+                        ema = self.reid_index.id_to_ema.get(gid)
+                        sim_ema = float(np.dot(q, ema)) if ema is not None else sim
+                        composite = (1.0 - alpha) * sim + alpha * sim_ema
+                        # Apply soft geometry gating if available
+                        composite += self._geometry_delta(camera_id, gid, dt_now)
+                        scored.append((gid, sim, composite))
+                    # sort by composite score desc
+                    scored.sort(key=lambda x: x[2], reverse=True)
+                    # apply per-frame uniqueness and thresholds with margin
+                    top_gid, top_sim, top_score = scored[0]
+                    second_score = scored[1][2] if len(scored) > 1 else -1.0
+                    margin_ok = (top_score - second_score) >= self.reid_rerank_margin
+                    if top_sim >= self.reid_sim_threshold and margin_ok and top_gid not in used_globals_this_frame:
+                        match = (top_gid, top_sim)
+                    else:
+                        # Cross-camera handoff relax rule
+                        prev_cam = self.last_camera_by_gid.get(top_gid)
+                        if prev_cam and self._are_adjacent(prev_cam, camera_id):
+                            # time-based gating using reid_index last seen
+                            last_ts = self.reid_index.id_to_last_seen.get(top_gid, 0.0)
+                            if (dt_now.timestamp() - last_ts) <= self.handoff_window_seconds:
+                                if (top_gid not in used_globals_this_frame) and (top_sim >= (self.reid_sim_threshold - self.handoff_margin)):
+                                    match = (top_gid, top_sim)
 
-                if match is None or (match is not None and match[1] < (self.reid_sim_threshold - self.handoff_margin)):
-                    # New visitor detected
-                    global_id = f"G{dt_now.timestamp():.0f}_{camera_id}_{d['local_id']}"
-                    # If we have a valid averaged embedding, add to index
-                    if emb_avg is not None:
-                        self.reid_index.add(global_id, emb_avg, now_ts=dt_now.timestamp())
-                    
-                    # Log ReID assignment
-                    self._log_reid_assignment(
-                        camera_id, frame_num, d['local_id'], global_id, 
-                        is_new=True, similarity=0.0, timestamp=dt_now
-                    )
-                    
-                    try:
-                        mv = upsert_visitor(_mongo_db, global_id, dt_now, dt_now)
-                        insert_visit_event(_mongo_db, mv.get("_id"), camera_id, dt_now, global_id=global_id)
-                    except Exception:
-                        pass
-                    
-                    d["global_id"] = global_id
-                    print(f"🆕 NEW visitor: {global_id} (cam={camera_id}, local_id={d['local_id']})")
-                    # Cache assignment
-                    self.last_assignment[camera_id][d['local_id']] = {"global_id": global_id, "ts": dt_now}
-                    self.last_camera_by_gid[global_id] = camera_id
-                else:
-                    # Existing visitor - ReID match
-                    global_id = match[0]
-                    similarity = match[1]
-                    
-                    # Log ReID assignment
-                    self._log_reid_assignment(
-                        camera_id, frame_num, d['local_id'], global_id,
-                        is_new=False, similarity=similarity, timestamp=dt_now
-                    )
-                    
-                    try:
-                        upsert_visitor(_mongo_db, global_id, dt_now, dt_now)
-                    except Exception:
-                        pass
-                    
-                    d["global_id"] = global_id
-                    print(f"🔄 REID match: {global_id} (cam={camera_id}, local_id={d['local_id']}, sim={similarity:.3f})")
-                    # Update index EMA and last_seen
-                    if emb_avg is not None:
-                        self.reid_index.update(global_id, emb_avg, now_ts=dt_now.timestamp())
-                    # Reserve this global for this frame to prevent duplicates
-                    used_globals_this_frame.add(global_id)
-                    # Cache assignment
-                    self.last_assignment[camera_id][d['local_id']] = {"global_id": global_id, "ts": dt_now}
-                    self.last_camera_by_gid[global_id] = camera_id
+            if match is None or (match is not None and match[1] < (self.reid_sim_threshold - self.handoff_margin)):
+                # New visitor detected
+                global_id = f"G{dt_now.timestamp():.0f}_{camera_id}_{d['local_id']}"
+                # If we have a valid averaged embedding, add to index
+                if emb_avg is not None:
+                    self.reid_index.add(global_id, emb_avg, now_ts=dt_now.timestamp())
+                
+                # Log ReID assignment
+                self._log_reid_assignment(
+                    camera_id, frame_num, d['local_id'], global_id, 
+                    is_new=True, similarity=0.0, timestamp=dt_now
+                )
+                
+                try:
+                    mv = upsert_visitor(_mongo_db, global_id, dt_now, dt_now)
+                    insert_visit_event(_mongo_db, mv.get("_id"), camera_id, dt_now, global_id=global_id)
+                except Exception:
+                    pass
+                
+                d["global_id"] = global_id
+                print(f"🆕 NEW visitor: {global_id} (cam={camera_id}, local_id={d['local_id']})")
+                # Cache assignment
+                self.last_assignment[camera_id][d['local_id']] = {"global_id": global_id, "ts": dt_now}
+                self.last_camera_by_gid[global_id] = camera_id
+            else:
+                # Existing visitor - ReID match
+                global_id = match[0]
+                similarity = match[1]
+                
+                # Log ReID assignment
+                self._log_reid_assignment(
+                    camera_id, frame_num, d['local_id'], global_id,
+                    is_new=False, similarity=similarity, timestamp=dt_now
+                )
+                
+                try:
+                    upsert_visitor(_mongo_db, global_id, dt_now, dt_now)
+                except Exception:
+                    pass
+                
+                d["global_id"] = global_id
+                print(f"🔄 REID match: {global_id} (cam={camera_id}, local_id={d['local_id']}), sim={similarity:.3f})")
+                # Update index EMA and last_seen
+                if emb_avg is not None:
+                    self.reid_index.update(global_id, emb_avg, now_ts=dt_now.timestamp())
+                # Reserve this global for this frame to prevent duplicates
+                used_globals_this_frame.add(global_id)
+                # Cache assignment
+                self.last_assignment[camera_id][d['local_id']] = {"global_id": global_id, "ts": dt_now}
+                self.last_camera_by_gid[global_id] = camera_id
                 
                 processed_dets.append(d)
 
