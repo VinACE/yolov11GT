@@ -273,6 +273,123 @@ def main() -> None:
         st.info("Unable to reach API for hourly presence.")
     else:
         st.info("No visitors detected yet. Start the pipeline to begin tracking!")
+    
+    # Phase 2 Features
+    st.markdown("---")
+    st.header("🔍 Phase 2 Advanced Analytics")
+    
+    tab1, tab2, tab3, tab4 = st.tabs(["🚨 Anomalies", "🗺️ Visitor Journey", "📊 Weekly Trends", "📥 Export Reports"])
+    
+    with tab1:
+        st.subheader("🚨 Real-Time Anomaly Detection")
+        try:
+            import requests
+            resp = requests.get("http://localhost:8000/analytics/anomalies?hours=24", timeout=5)
+            if resp.ok:
+                anomaly_data = resp.json()
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Total Anomalies", anomaly_data['total_count'])
+                col2.metric("Critical", anomaly_data['critical_count'], delta="🔴")
+                col3.metric("Warnings", anomaly_data['total_count'] - anomaly_data['critical_count'], delta="🟡")
+                
+                if anomaly_data['anomalies']:
+                    st.write("**Recent Anomalies:**")
+                    for anomaly in anomaly_data['anomalies'][:10]:
+                        with st.expander(f"{anomaly['severity']} - {anomaly['type'].replace('_', ' ').title()} ({anomaly['timestamp'][:16]})"):
+                            st.write(f"**Description:** {anomaly['description']}")
+                            if anomaly.get('camera_id'):
+                                st.write(f"**Camera:** {anomaly['camera_id']}")
+                            if anomaly.get('zone'):
+                                st.write(f"**Zone:** {anomaly['zone']}")
+                            if anomaly.get('value'):
+                                st.write(f"**Value:** {anomaly['value']}")
+                else:
+                    st.success("✅ No anomalies detected - all systems normal")
+            else:
+                st.info("Anomaly detection API unavailable")
+        except Exception as e:
+            st.info(f"Anomaly detection: {e}")
+    
+    with tab2:
+        st.subheader("🗺️ Visitor Journey Tracker")
+        
+        # Get list of visitors
+        try:
+            visitor_id = st.text_input("Enter Visitor ID (e.g., PERSON_001):", "")
+            
+            if visitor_id and st.button("Track Journey"):
+                import requests
+                resp = requests.get(f"http://localhost:8000/analytics/visitor-journey/{visitor_id}", timeout=5)
+                if resp.ok:
+                    journey_data = resp.json()
+                    
+                    col1, col2 = st.columns(2)
+                    col1.metric("Cameras Visited", journey_data['total_cameras'])
+                    col2.metric("Zones Visited", journey_data['total_zones'])
+                    
+                    st.write("**Path Timeline:**")
+                    for i, step in enumerate(journey_data['path'], 1):
+                        st.write(f"{i}. 📹 **{step['camera_id']}** at {step['timestamp'][:19]}")
+                        if step.get('zone'):
+                            st.write(f"   └─ 🏷️ Zone: {step['zone']}")
+                else:
+                    st.error(f"Visitor {visitor_id} not found")
+        except Exception as e:
+            st.info(f"Journey tracker: {e}")
+    
+    with tab3:
+        st.subheader("📊 Weekly Trend Analysis")
+        try:
+            import requests
+            resp = requests.get("http://localhost:8000/analytics/weekly-trend", timeout=5)
+            if resp.ok:
+                trend_data = resp.json()
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Week Total", trend_data['week_total'])
+                col2.metric("Avg Dwell Time", f"{trend_data['week_avg_dwell']:.1f} min")
+                col3.metric("Trend", trend_data['trend'])
+                
+                if trend_data['days']:
+                    trend_df = pd.DataFrame(trend_data['days'])
+                    trend_df['date'] = pd.to_datetime(trend_df['date'])
+                    
+                    st.write("**Daily Visitor Count:**")
+                    st.line_chart(trend_df.set_index('date')['total_visitors'])
+                    
+                    st.write("**Daily Statistics:**")
+                    st.dataframe(trend_df[['date', 'total_visitors', 'avg_dwell_minutes', 'peak_hour', 'busiest_camera']])
+                else:
+                    st.info("Not enough data for trend analysis")
+            else:
+                st.info("Weekly trend API unavailable")
+        except Exception as e:
+            st.info(f"Weekly trends: {e}")
+    
+    with tab4:
+        st.subheader("📥 Export Reports")
+        st.write("Download analytics data as CSV files:")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**📊 Visitor Reports:**")
+            if st.button("Export Visitors CSV"):
+                st.markdown("[Download Visitors Report](http://localhost:8000/export/visitors.csv)")
+            
+            if st.button("Export Peak Hours CSV"):
+                st.markdown("[Download Peak Hours Report](http://localhost:8000/export/peak-hours.csv)")
+        
+        with col2:
+            st.write("**📹 System Reports:**")
+            if st.button("Export Camera Health CSV"):
+                st.markdown("[Download Camera Health](http://localhost:8000/export/camera-health.csv)")
+            
+            if st.button("Export Zone Stats CSV"):
+                st.markdown("[Download Zone Statistics](http://localhost:8000/export/zone-stats.csv)")
+        
+        st.info("💡 Tip: Click the buttons above to generate download links. Files will be named with today's date.")
 
 
 if __name__ == "__main__":
