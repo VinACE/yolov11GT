@@ -118,3 +118,4 @@ mongo_data/
 
 # Exclude compilation/runtime artifacts
 outputs/
+mongo_data.mongo6_backup/
