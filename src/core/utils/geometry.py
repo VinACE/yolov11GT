@@ -108,3 +108,4 @@ def polygon_area(polygon: List[List[float]]) -> float:
         area -= polygon[j][0] * polygon[i][1]
     
     return abs(area) / 2.0
+

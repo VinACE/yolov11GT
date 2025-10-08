@@ -165,3 +165,4 @@ Expected result: **11-12 unique visitors** in ~1-2 minutes
 **Status:** ✅ Configured for CPU real-time with OSNet  
 **Processing Speed:** ~1 FPS (FRAME_PROCESS_EVERY=30)  
 **Accuracy:** Good for visitor counting & dwell time
+
