@@ -11,6 +11,7 @@ from core.detection.yolo import YoloV11Detector
 from core.segmentation.sam import SamSegmenter
 from core.tracking.tracker import StrongSortLite
 from core.reid.embedding import ReidEmbedder, ReidIndex
+from core.reid.gender_classifier import create_gender_classifier
 from core.storage.mongo import get_mongo_db, upsert_visitor, insert_visit_event, close_open_visit
 _mongo_db = get_mongo_db()
 
@@ -70,6 +71,9 @@ class MultiCameraOrchestrator:
         ttl_s = int(os.environ.get("REID_GALLERY_TTL_SECONDS", "60"))
         self.reid_index.set_ema_momentum(ema_m)
         self.reid_index.set_ttl_seconds(ttl_s)
+        
+        # Initialize gender classifier
+        self.gender_classifier = create_gender_classifier()
         
         # Visitor exit timeout – mark visitor as exited if not seen for N seconds
         # You can override via env var VISITOR_TIMEOUT_SECONDS
@@ -284,7 +288,13 @@ class MultiCameraOrchestrator:
                 # Skip ReID; treat as no match to avoid false positives
                 match = None
                 emb_avg = None
+                gender = 'unknown'
+                gender_conf = 0.0
             else:
+                # STEP 1: Classify gender BEFORE ReID matching
+                gender, gender_conf = self.gender_classifier.classify(crop)
+                
+                # STEP 2: Generate ReID embedding
                 emb = self.embedder.embed(crop)
                 # Attach current single-frame emb for StrongSortLite association
                 d["emb"] = emb
@@ -292,9 +302,10 @@ class MultiCameraOrchestrator:
                 buf = self.feature_buffers[camera_id][d['local_id']]
                 buf.append(emb)
                 emb_avg = np.mean(np.stack(list(buf)), axis=0).astype(np.float32)
-                # Top-k candidate search with TTL filtering
+                
+                # STEP 3: Search with gender filtering (gender-aware matching!)
                 topk = int(os.environ.get("REID_TOPK", "5"))
-                candidates = self.reid_index.search_topk(emb_avg, topk=topk, now_ts=dt_now.timestamp())
+                candidates = self.reid_index.search_topk(emb_avg, topk=topk, now_ts=dt_now.timestamp(), gender=gender)
                 # Cosine-margin reranking against per-ID EMA feature
                 match = None
                 if candidates:
@@ -329,9 +340,9 @@ class MultiCameraOrchestrator:
             if match is None or (match is not None and match[1] < (self.reid_sim_threshold - self.handoff_margin)):
                 # New visitor detected
                 global_id = f"G{dt_now.timestamp():.0f}_{camera_id}_{d['local_id']}"
-                # If we have a valid averaged embedding, add to index
+                # If we have a valid averaged embedding, add to index WITH GENDER
                 if emb_avg is not None:
-                    self.reid_index.add(global_id, emb_avg, now_ts=dt_now.timestamp())
+                    self.reid_index.add(global_id, emb_avg, now_ts=dt_now.timestamp(), gender=gender)
                 
                 # Log ReID assignment
                 self._log_reid_assignment(
@@ -339,14 +350,29 @@ class MultiCameraOrchestrator:
                     is_new=True, similarity=0.0, timestamp=dt_now
                 )
                 
+                # Save face crop for visualization
+                crop_path = None
+                if crop.size > 0:
+                    try:
+                        face_crops_dir = self.debug_dir / "face_crops"
+                        face_crops_dir.mkdir(exist_ok=True)
+                        crop_filename = f"{global_id}.jpg"
+                        crop_path = face_crops_dir / crop_filename
+                        cv2.imwrite(str(crop_path), crop)
+                        crop_path = f"outputs/debug/face_crops/{crop_filename}"  # Relative path for web
+                    except Exception as e:
+                        print(f"⚠️ Failed to save face crop: {e}")
+                
                 try:
-                    mv = upsert_visitor(_mongo_db, global_id, dt_now, dt_now)
-                    insert_visit_event(_mongo_db, mv.get("_id"), camera_id, dt_now, global_id=global_id)
+                    # Save visitor with gender info and face crop path
+                    mv = upsert_visitor(_mongo_db, global_id, dt_now, dt_now, gender=gender, face_crop_path=crop_path)
+                    insert_visit_event(_mongo_db, mv.get("_id"), camera_id, dt_now, global_id=global_id, gender=gender)
                 except Exception:
                     pass
                 
                 d["global_id"] = global_id
-                print(f"🆕 NEW visitor: {global_id} (cam={camera_id}, local_id={d['local_id']})")
+                d["gender"] = gender  # Attach gender to detection
+                print(f"🆕 NEW visitor: {global_id} (cam={camera_id}, local_id={d['local_id']}, gender={gender})")
                 # Cache assignment
                 self.last_assignment[camera_id][d['local_id']] = {"global_id": global_id, "ts": dt_now}
                 self.last_camera_by_gid[global_id] = camera_id
@@ -367,7 +393,10 @@ class MultiCameraOrchestrator:
                     pass
                 
                 d["global_id"] = global_id
-                print(f"🔄 REID match: {global_id} (cam={camera_id}, local_id={d['local_id']}), sim={similarity:.3f})")
+                d["gender"] = gender  # Attach gender to detection
+                # Get stored gender from index
+                stored_gender = self.reid_index.id_to_gender.get(global_id, 'unknown')
+                print(f"🔄 REID match: {global_id} (cam={camera_id}, local_id={d['local_id']}), sim={similarity:.3f}, gender={stored_gender})")
                 # Update index EMA and last_seen
                 if emb_avg is not None:
                     self.reid_index.update(global_id, emb_avg, now_ts=dt_now.timestamp())

@@ -14,7 +14,14 @@ from core.storage.mongo import get_mongo_db
 def load_stats_mongo(db):
     today = datetime.utcnow().date()
     start = datetime(today.year, today.month, today.day)
-    unique_today = len(db.visit_events.distinct("visitor_id", {"in_time": {"$gte": start}}))
+    # Fix for MongoDB 8: Filter out null values explicitly
+    # MongoDB 8 includes null in distinct() results, MongoDB 6 excluded them
+    distinct_visitor_ids = db.visit_events.distinct(
+        "visitor_id", 
+        {"in_time": {"$gte": start}, "visitor_id": {"$exists": True, "$ne": None}}
+    )
+    # Additional Python-level filtering for empty strings
+    unique_today = len([v for v in distinct_visitor_ids if v])
     timeout_seconds = int(os.environ.get("VISITOR_TIMEOUT_SECONDS", "30"))
     cutoff = datetime.utcnow() - timedelta(seconds=timeout_seconds)
     recent_visitors = set(v["_id"] for v in db.visitors.find({"last_seen_at": {"$gte": cutoff}}, {"_id": 1}))
@@ -79,6 +86,69 @@ def main() -> None:
     else:
         col3.metric("⏱️ Avg Dwell", "0s")
         col4.metric("P95 Dwell", "0s")
+    
+    # Gender distribution with face crops
+    st.markdown("---")
+    st.subheader("🚻 Gender Distribution")
+    
+    # Metrics
+    col1, col2, col3 = st.columns(3)
+    males = db.visitors.count_documents({"gender": "male"})
+    females = db.visitors.count_documents({"gender": "female"})
+    unknown = db.visitors.count_documents({"gender": "unknown"})
+    col1.metric("👨 Males", males)
+    col2.metric("👩 Females", females)
+    col3.metric("👤 Unknown", unknown)
+    
+    # Face gallery by gender
+    if males + females > 0:
+        st.markdown("#### 👤 Visitor Face Gallery")
+        
+        tab1, tab2, tab3 = st.tabs(["👨 Males", "👩 Females", "👤 All"])
+        
+        with tab1:
+            male_visitors = list(db.visitors.find({"gender": "male"}).limit(20))
+            if male_visitors:
+                cols = st.columns(min(5, len(male_visitors)))
+                for idx, visitor in enumerate(male_visitors):
+                    with cols[idx % 5]:
+                        crop_path = visitor.get("face_crop_path")
+                        if crop_path and os.path.exists(crop_path):
+                            st.image(crop_path, caption=visitor.get("global_id", "")[:15], width=100)
+                        else:
+                            st.write(visitor.get("global_id", "")[:15])
+            else:
+                st.info("No male visitors yet")
+        
+        with tab2:
+            female_visitors = list(db.visitors.find({"gender": "female"}).limit(20))
+            if female_visitors:
+                cols = st.columns(min(5, len(female_visitors)))
+                for idx, visitor in enumerate(female_visitors):
+                    with cols[idx % 5]:
+                        crop_path = visitor.get("face_crop_path")
+                        if crop_path and os.path.exists(crop_path):
+                            st.image(crop_path, caption=visitor.get("global_id", "")[:15], width=100)
+                        else:
+                            st.write(visitor.get("global_id", "")[:15])
+            else:
+                st.info("No female visitors yet")
+        
+        with tab3:
+            all_visitors = list(db.visitors.find().limit(30))
+            if all_visitors:
+                cols = st.columns(6)
+                for idx, visitor in enumerate(all_visitors):
+                    with cols[idx % 6]:
+                        crop_path = visitor.get("face_crop_path")
+                        gender = visitor.get("gender", "unknown")
+                        gender_icon = "👨" if gender == "male" else "👩" if gender == "female" else "👤"
+                        if crop_path and os.path.exists(crop_path):
+                            st.image(crop_path, caption=f"{gender_icon} {visitor.get('global_id', '')[:12]}", width=80)
+                        else:
+                            st.write(f"{gender_icon} {visitor.get('global_id', '')[:12]}")
+            else:
+                st.info("No visitors yet")
 
     st.markdown("---")
     
@@ -167,7 +237,7 @@ def main() -> None:
     
     st.markdown("---")
     
-    # Visitor time spent table
+    # Visitor time spent table with gender
     st.subheader("⏰ Time Spent by Each Visitor (ReID-based)")
     
     if len(dwell_df) > 0:
@@ -175,8 +245,15 @@ def main() -> None:
         for _, r in dwell_df.sort_values("first_seen_at", ascending=False).iterrows():
             time_spent = calculate_time_spent(r["first_seen_at"], r["last_seen_at"])
             status = "🟢 In Premises" if r["first_seen_at"] == r["last_seen_at"] else "🔴 Exited"
+            
+            # Get gender from database
+            visitor_doc = db.visitors.find_one({"global_id": r["visitor_id"]})
+            gender = visitor_doc.get("gender", "unknown") if visitor_doc else "unknown"
+            gender_icon = "👨" if gender == "male" else "👩" if gender == "female" else "👤"
+            
             visitor_data.append({
                 "Visitor ID": r["visitor_id"],
+                "Gender": f"{gender_icon} {gender.capitalize()}",
                 "Entry Time": r["first_seen_at"].strftime("%Y-%m-%d %H:%M:%S"),
                 "Last Seen": r["last_seen_at"].strftime("%Y-%m-%d %H:%M:%S"),
                 "Time Spent": time_spent,

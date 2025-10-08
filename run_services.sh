@@ -16,11 +16,30 @@ if ! docker ps | grep -q yolov11-cpu; then
     sleep 3
 fi
 
-# Clean database and outputs at start for a fresh run
-echo "🧹 Cleaning MongoDB 'yolov11' and clearing /app/outputs..."
-docker exec -i yolov11-mongo mongosh --quiet --eval "db.getSiblingDB('yolov11').dropDatabase()" || true
-docker-compose -f $COMPOSE_FILE exec -T yolov11 bash -lc "rm -rf /app/outputs/* || true; mkdir -p /app/outputs" || true
-echo "✅ Cleanup done."
+# Ask user if they want to reset the database
+echo "🗄️  Database Reset Options:"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+read -p "Do you want to reset the database and clear outputs? (y/n): " reset_choice
+
+if [[ "$reset_choice" =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "🧹 Cleaning MongoDB 'yolov11' and clearing /app/outputs..."
+    docker exec -i yolov11-mongo mongosh --quiet --eval "db.getSiblingDB('yolov11').dropDatabase()" || true
+    docker-compose -f $COMPOSE_FILE exec -T yolov11 bash -lc "rm -rf /app/outputs/* || true; mkdir -p /app/outputs" || true
+    echo "✅ Database and outputs cleared."
+    echo ""
+else
+    echo ""
+    echo "⏩ Keeping existing database and outputs."
+    echo ""
+    # Show current stats
+    visitor_count=$(docker exec -i yolov11-mongo mongosh --quiet --eval "db.getSiblingDB('yolov11').visitors.countDocuments({})" 2>/dev/null || echo "0")
+    event_count=$(docker exec -i yolov11-mongo mongosh --quiet --eval "db.getSiblingDB('yolov11').visit_events.countDocuments({})" 2>/dev/null || echo "0")
+    echo "📊 Current Database Stats:"
+    echo "   Visitors: $visitor_count"
+    echo "   Events: $event_count"
+    echo ""
+fi
 
 # Menu
 echo "Select service to run:"

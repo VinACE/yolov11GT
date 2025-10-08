@@ -36,17 +36,28 @@ def get_mongo_db():
     return db
 
 
-def upsert_visitor(db, global_id: str, first_seen_at: datetime, last_seen_at: Optional[datetime] = None) -> Dict[str, Any]:
+def upsert_visitor(db, global_id: str, first_seen_at: datetime, last_seen_at: Optional[datetime] = None, gender: Optional[str] = None, face_crop_path: Optional[str] = None) -> Dict[str, Any]:
     last_seen = last_seen_at or first_seen_at
+    update_doc = {
+        "$setOnInsert": {"first_seen_at": first_seen_at},
+        "$set": {"last_seen_at": last_seen}
+    }
+    # Add gender if provided (don't overwrite if already set)
+    if gender and gender != 'unknown':
+        update_doc["$setOnInsert"]["gender"] = gender
+    # Add face crop path if provided
+    if face_crop_path:
+        update_doc["$setOnInsert"]["face_crop_path"] = face_crop_path
+    
     db.visitors.update_one(
         {"global_id": global_id},
-        {"$setOnInsert": {"first_seen_at": first_seen_at}, "$set": {"last_seen_at": last_seen}},
+        update_doc,
         upsert=True,
     )
     return db.visitors.find_one({"global_id": global_id})
 
 
-def insert_visit_event(db, visitor_id: Any, camera_id: str, in_time: datetime, global_id: Optional[str] = None) -> Any:
+def insert_visit_event(db, visitor_id: Any, camera_id: str, in_time: datetime, global_id: Optional[str] = None, gender: Optional[str] = None) -> Any:
     doc = {
         "visitor_id": visitor_id,
         "camera_id": camera_id,
@@ -55,6 +66,8 @@ def insert_visit_event(db, visitor_id: Any, camera_id: str, in_time: datetime, g
     }
     if global_id is not None:
         doc["global_id"] = global_id
+    if gender is not None:
+        doc["gender"] = gender
     return db.visit_events.insert_one(doc).inserted_id
 
 

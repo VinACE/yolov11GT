@@ -88,7 +88,10 @@ def export_peak_hours_csv(db, date: datetime) -> str:
     for visit in visits:
         entry_hour = visit['in_time'].hour
         hourly_stats[entry_hour]["count"] += 1
-        hourly_stats[entry_hour]["visitors"].add(visit.get('global_id', ''))
+        # Fix for MongoDB 8: Only add global_id if it exists and is not None/empty
+        global_id = visit.get('global_id')
+        if global_id:  # Filters out None, empty string, and other falsy values
+            hourly_stats[entry_hour]["visitors"].add(global_id)
         
         # Calculate dwell time if visit closed
         if visit.get('out_time'):

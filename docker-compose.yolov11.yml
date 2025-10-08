@@ -21,26 +21,33 @@ services:
       - USE_MONGO=1
       - MONGO_URI=mongodb://mongo:27017
       - MONGO_DB=yolov11
-      - FRAME_PROCESS_EVERY=30
+      - FRAME_PROCESS_EVERY=24
       - VISITOR_TIMEOUT_SECONDS=15
-      # ReID Matching Parameters (Optimized for OSNet x0.75)
-      - REID_SIM_THRESHOLD=0.65
-      - REID_RERANK_ALPHA=0.40
-      - REID_RERANK_MARGIN=0.04
-      - FEATURE_AVG_WINDOW=8
+      # ReID Matching Parameters (Hybrid: gtdevvin frame rate + gtvin tuning)
+      # Using FRAME_PROCESS_EVERY=10 from gtdevvin (better tracking)
+      # Using optimized threshold from gtvin extensive tuning
+      # OSNet best: ~9-10 visitors (ground truth: 11, acceptable for real-time)
+      - REID_SIM_THRESHOLD=0.6435
+      - REID_RERANK_ALPHA=0.37
+      - REID_RERANK_MARGIN=0.032
+      - FEATURE_AVG_WINDOW=11
       - MIN_CROP_HEIGHT=120
-      - SAME_CAM_CONTINUITY_SECONDS=10
-      - REID_TOPK=5
+      - SAME_CAM_CONTINUITY_SECONDS=12
+      - REID_TOPK=6
       - REID_GALLERY_TTL_SECONDS=3600
-      - REID_EMA_MOMENTUM=0.9
-      # Cross-Camera Handoff
-      - HANDOFF_WINDOW_SECONDS=8
-      - HANDOFF_MARGIN=0.03
+      - REID_EMA_MOMENTUM=0.88
+      # Cross-Camera Handoff (more lenient)
+      - HANDOFF_WINDOW_SECONDS=10
+      - HANDOFF_MARGIN=0.04
+      # Gender Classification (improves ReID accuracy by filtering cross-gender matches)
+      # Uses lightweight OpenCV DNN model (~44MB, ~5-10ms inference)
+      - GENDER_CLASSIFICATION_ENABLED=1
       # FastReID Configuration (MSMT17 R50 or Market1501 R50)
       # ✅ Python 3.11 compatible with compatibility shim in fastreid_embedder.py
       # MSMT17: Better cross-domain generalization (294MB, 2048-dim)
       # Market1501: Retail-focused (288MB, 2048-dim)
-      # NOTE: FastREID is slow on CPU (~100-150ms/person). Using OSNet for real-time.
+      # NOTE: FastREID is slow on CPU (~100-150ms/person) - disabled for speed
+      # FastReID gave better accuracy but too slow for real-time
       - FASTREID_ENABLED=0
       # Switch between: msmt17_r50 or market1501_r50
       - FASTREID_PRESET=msmt17_r50
@@ -98,7 +105,7 @@ services:
     restart: unless-stopped
  
   mongo:
-    image: mongo:6
+    image: mongo:8
     container_name: yolov11-mongo
     restart: always
     ports:

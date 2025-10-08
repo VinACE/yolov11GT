@@ -25,6 +25,7 @@ class ReidIndex:
         # Per-ID derived state
         self.id_to_ema: Dict[str, np.ndarray] = {}
         self.id_to_last_seen: Dict[str, float] = {}
+        self.id_to_gender: Dict[str, str] = {}  # Gender per global_id
         self._ema_momentum: float = 0.9
         self._ttl_seconds: int = 60
 
@@ -41,14 +42,15 @@ class ReidIndex:
             v = v / (n + 1e-8)
         return v
 
-    def add(self, global_id: str, emb: np.ndarray, now_ts: Optional[float] = None) -> None:
+    def add(self, global_id: str, emb: np.ndarray, now_ts: Optional[float] = None, gender: str = 'unknown') -> None:
         emb_n = self._normalize(emb)
         self.embeddings.append(emb_n)
         self.global_ids.append(global_id)
         if self._index is not None:
             self._index.add(emb_n.reshape(1, -1))
-        # Initialize EMA and last_seen
+        # Initialize EMA, last_seen, and gender
         self.id_to_ema[global_id] = emb_n.copy()
+        self.id_to_gender[global_id] = gender
         if now_ts is not None:
             self.id_to_last_seen[global_id] = now_ts
 
@@ -80,9 +82,15 @@ class ReidIndex:
             return True
         return (now_ts - last) <= self._ttl_seconds
 
-    def search_topk(self, emb: np.ndarray, topk: int = 5, now_ts: Optional[float] = None) -> List[Tuple[str, float]]:
+    def search_topk(self, emb: np.ndarray, topk: int = 5, now_ts: Optional[float] = None, gender: Optional[str] = None) -> List[Tuple[str, float]]:
         """Return top-k candidate (global_id, similarity) after aggregating per-id max sim.
-        TTL filtering applied if now_ts is provided.
+        TTL filtering and gender filtering applied if provided.
+        
+        Args:
+            emb: Query embedding
+            topk: Number of top candidates to return
+            now_ts: Current timestamp for TTL filtering
+            gender: Query gender for gender-based filtering ('male', 'female', 'unknown', or None)
         """
         if len(self.embeddings) == 0:
             return []
@@ -98,18 +106,24 @@ class ReidIndex:
             sims = [float(sims_all[i]) for i in idxs]
             ids = [self.global_ids[int(i)] for i in idxs]
         # Aggregate by global_id (take max sim per id)
+        # Apply gender filtering if gender is specified
         best_by_id: Dict[str, float] = {}
         for gid, s in zip(ids, sims):
             if now_ts is not None and not self._is_alive(gid, now_ts):
                 continue
+            # Gender-based filtering
+            if gender is not None and gender != 'unknown':
+                stored_gender = self.id_to_gender.get(gid, 'unknown')
+                if stored_gender != 'unknown' and stored_gender != gender:
+                    continue  # Skip if genders don't match
             if gid not in best_by_id or s > best_by_id[gid]:
                 best_by_id[gid] = s
         # Sort and return topk
         candidates = sorted(best_by_id.items(), key=lambda x: x[1], reverse=True)[:topk]
         return candidates
 
-    def search(self, emb: np.ndarray, topk: int = 1, now_ts: Optional[float] = None) -> Optional[Tuple[str, float]]:
-        cands = self.search_topk(emb, topk=topk, now_ts=now_ts)
+    def search(self, emb: np.ndarray, topk: int = 1, now_ts: Optional[float] = None, gender: Optional[str] = None) -> Optional[Tuple[str, float]]:
+        cands = self.search_topk(emb, topk=topk, now_ts=now_ts, gender=gender)
         if not cands:
             return None
         return cands[0]
