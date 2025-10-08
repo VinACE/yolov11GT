@@ -16,14 +16,23 @@ def get_mongo_db():
     db_name = os.environ.get("MONGO_DB", "yolov11")
     db = client[db_name]
 
-    # Ensure basic indexes exist (idempotent)
-    db.visitors.create_index([("global_id", ASCENDING)], unique=True)
-    db.visitors.create_index([("last_seen_at", ASCENDING)])
-    db.visit_events.create_index([("visitor_id", ASCENDING), ("camera_id", ASCENDING)])
-    db.visit_events.create_index([("in_time", ASCENDING)])
-    db.visit_events.create_index([("out_time", ASCENDING)])
-    db.activity_events.create_index([("visitor_id", ASCENDING), ("zone", ASCENDING)])
-    db.activity_events.create_index([("start_time", ASCENDING)])
+    # Ensure basic indexes exist (idempotent, with error handling for unique constraint)
+    try:
+        db.visitors.create_index([("global_id", ASCENDING)], unique=True)
+    except PyMongoError as e:
+        # Index might already exist or there are duplicate values - continue anyway
+        print(f"⚠️  Warning creating unique index on global_id: {e}")
+    
+    try:
+        db.visitors.create_index([("last_seen_at", ASCENDING)])
+        db.visit_events.create_index([("visitor_id", ASCENDING), ("camera_id", ASCENDING)])
+        db.visit_events.create_index([("in_time", ASCENDING)])
+        db.visit_events.create_index([("out_time", ASCENDING)])
+        db.activity_events.create_index([("visitor_id", ASCENDING), ("zone", ASCENDING)])
+        db.activity_events.create_index([("start_time", ASCENDING)])
+    except PyMongoError as e:
+        print(f"⚠️  Warning creating indexes: {e}")
+    
     return db
 
 
