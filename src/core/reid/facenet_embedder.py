@@ -350,3 +350,4 @@ if __name__ == "__main__":
     print("\n3. Running speed benchmark:")
     benchmark_embedders()
 
+

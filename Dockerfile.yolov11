@@ -115,7 +115,8 @@ RUN pip install --no-cache-dir \
 # Production ReID dependencies
 RUN pip install --no-cache-dir \
     torchreid \
-    gdown
+    gdown \
+    facenet-pytorch
 
 # Install FastReID dependencies and source
 RUN pip install --no-cache-dir yacs tabulate termcolor && \

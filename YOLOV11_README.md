@@ -26,7 +26,7 @@ docker-compose -f docker-compose.yolov11.yml exec yolov11 python /app/test_yolov
 
 ```bash
 # Build the image
-    docker build -f Dockerfile.yolov11 -t yolov11-cpu .
+r
 
 # Run the container
 docker run -it --rm \

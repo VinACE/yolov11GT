@@ -113,10 +113,11 @@ def main() -> None:
                 for idx, visitor in enumerate(male_visitors):
                     with cols[idx % 5]:
                         crop_path = visitor.get("face_crop_path")
+                        gid = visitor.get("global_id", "")
                         if crop_path and os.path.exists(crop_path):
-                            st.image(crop_path, caption=visitor.get("global_id", "")[:15], width=100)
+                            st.image(crop_path, caption=gid, width=100, use_container_width=False)
                         else:
-                            st.write(visitor.get("global_id", "")[:15])
+                            st.write(gid)
             else:
                 st.info("No male visitors yet")
         
@@ -127,10 +128,11 @@ def main() -> None:
                 for idx, visitor in enumerate(female_visitors):
                     with cols[idx % 5]:
                         crop_path = visitor.get("face_crop_path")
+                        gid = visitor.get("global_id", "")
                         if crop_path and os.path.exists(crop_path):
-                            st.image(crop_path, caption=visitor.get("global_id", "")[:15], width=100)
+                            st.image(crop_path, caption=gid, width=100, use_container_width=False)
                         else:
-                            st.write(visitor.get("global_id", "")[:15])
+                            st.write(gid)
             else:
                 st.info("No female visitors yet")
         
@@ -143,10 +145,11 @@ def main() -> None:
                         crop_path = visitor.get("face_crop_path")
                         gender = visitor.get("gender", "unknown")
                         gender_icon = "👨" if gender == "male" else "👩" if gender == "female" else "👤"
+                        gid = visitor.get('global_id', '')
                         if crop_path and os.path.exists(crop_path):
-                            st.image(crop_path, caption=f"{gender_icon} {visitor.get('global_id', '')[:12]}", width=80)
+                            st.image(crop_path, caption=f"{gender_icon} {gid}", width=80, use_container_width=False)
                         else:
-                            st.write(f"{gender_icon} {visitor.get('global_id', '')[:12]}")
+                            st.write(f"{gender_icon} {gid}")
             else:
                 st.info("No visitors yet")
 

@@ -620,3 +620,4 @@ docker-compose -f docker-compose.yolov11.yml logs yolov11 | grep -i -A 5 hybrid
 **Expected**: Faster + more accurate person identification  
 **Enjoy!** 🚀
 
+

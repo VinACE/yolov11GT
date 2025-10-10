@@ -589,3 +589,4 @@ MIN_CROP_HEIGHT=80  # Lower (was 120) to accept smaller crops
 **Next**: Restart service and test accuracy  
 **Expected**: 11/11 people (100% accuracy) 🎯
 
+
