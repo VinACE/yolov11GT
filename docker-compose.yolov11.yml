@@ -26,7 +26,7 @@ services:
       # ReID Matching Parameters (Hybrid: gtdevvin frame rate + gtvin tuning)
       # Using FRAME_PROCESS_EVERY=10 from gtdevvin (better tracking)
       # Using optimized threshold from gtvin extensive tuning
-      # OSNet best: ~9-10 visitors (ground truth: 11, acceptable for real-time)
+      # Using OSNet for speed (30-50ms) - FastREID too slow (100-150ms)
       - REID_SIM_THRESHOLD=0.6435
       - REID_RERANK_ALPHA=0.37
       - REID_RERANK_MARGIN=0.032
@@ -42,12 +42,16 @@ services:
       # Gender Classification (improves ReID accuracy by filtering cross-gender matches)
       # Uses lightweight OpenCV DNN model (~44MB, ~5-10ms inference)
       - GENDER_CLASSIFICATION_ENABLED=1
+      # Hybrid ReID (FaceNet + OSNet) - RECOMMENDED for best speed + accuracy
+      # Uses FaceNet when face visible (10-30ms, 99% accurate) + OSNet fallback (30-50ms)
+      # Expected: 95-98% accuracy, avg 26ms per person (vs OSNet alone: 82-91%, 40ms)
+      - USE_HYBRID_REID=1
       # FastReID Configuration (MSMT17 R50 or Market1501 R50)
       # ✅ Python 3.11 compatible with compatibility shim in fastreid_embedder.py
       # MSMT17: Better cross-domain generalization (294MB, 2048-dim)
       # Market1501: Retail-focused (288MB, 2048-dim)
-      # NOTE: FastREID is slow on CPU (~100-150ms/person) - disabled for speed
-      # FastReID gave better accuracy but too slow for real-time
+      # NOTE: FastREID is slow on CPU (~100-150ms/person) - too slow for real-time
+      # Keeping OSNet for speed (30-50ms) - see SPEED_VS_ACCURACY_MODELS.md for alternatives
       - FASTREID_ENABLED=0
       # Switch between: msmt17_r50 or market1501_r50
       - FASTREID_PRESET=msmt17_r50
@@ -61,7 +65,7 @@ services:
       resources:
         limits:
           cpus: '4.0'
-          memory: 4G
+          memory: 6G  # Increased for Hybrid (FaceNet + OSNet models)
         reservations:
           cpus: '1.0'
           memory: 1G

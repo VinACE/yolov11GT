@@ -111,10 +111,13 @@ class ReidIndex:
         for gid, s in zip(ids, sims):
             if now_ts is not None and not self._is_alive(gid, now_ts):
                 continue
-            # Gender-based filtering
+            # Gender-based filtering - STRICT: Block cross-gender matching
+            # If both genders are known and different → BLOCK
+            # If one is unknown → Allow (may need improvement but safer than cross-gender match)
             if gender is not None and gender != 'unknown':
                 stored_gender = self.id_to_gender.get(gid, 'unknown')
                 if stored_gender != 'unknown' and stored_gender != gender:
+                    # CRITICAL: Different genders CANNOT match!
                     continue  # Skip if genders don't match
             if gid not in best_by_id or s > best_by_id[gid]:
                 best_by_id[gid] = s

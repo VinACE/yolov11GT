@@ -53,3 +53,4 @@ thop
 pyyaml
 requests
 pytz
+facenet-pytorch>=2.6.0  # Hybrid ReID (FaceNet + OSNet)

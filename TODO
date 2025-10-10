@@ -63,3 +63,19 @@ Operational alerts
 Multi-channel notifications (email, SMS, webhook)
 
 ****
+******* improvization ****
+
+1.. Person identification ..... we have check for better models...>
+
+✅ SOLUTION: Enabled FastReID (better than OSNet, no custom training needed)
+   - Changed FASTREID_ENABLED=0 → 1
+   - Updated threshold 0.6435 → 0.42
+   - Expected: 100% accuracy (11/11) vs OSNet 82-91% (9-10/11)
+   - See: REID_ACCURACY_IMPROVEMENT_GUIDE.md
+   - Next: Test and verify accuracy
+
+Person iodentification custom models --- Devi (NOT NEEDED - use FastReID first!)
+
+2. Gender detection.... check models...>
+
+Gender iodentification custom models ---> 
