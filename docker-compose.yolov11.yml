@@ -13,7 +13,7 @@ services:
       - ./src:/app/src
       - ./scripts:/app/scripts
     ports:
-      - "8000:8000"
+      - "8001:8000"
       - "8501:8501"
     environment:
       - PYTHONUNBUFFERED=1
@@ -21,17 +21,18 @@ services:
       - USE_MONGO=1
       - MONGO_URI=mongodb://mongo:27017
       - MONGO_DB=yolov11
-      - FRAME_PROCESS_EVERY=24
+      - FRAME_PROCESS_EVERY=15
       - VISITOR_TIMEOUT_SECONDS=15
       # ReID Matching Parameters (Hybrid: gtdevvin frame rate + gtvin tuning)
-      # Using FRAME_PROCESS_EVERY=10 from gtdevvin (better tracking)
+      # Using FRAME_PROCESS_EVERY=15 for better tracking continuity (was 24)
       # Using optimized threshold from gtvin extensive tuning
       # Using OSNet for speed (30-50ms) - FastREID too slow (100-150ms)
-      - REID_SIM_THRESHOLD=0.6435
-      - REID_RERANK_ALPHA=0.37
-      - REID_RERANK_MARGIN=0.032
+      # OPTIMIZED FOR HYBRID REID: More lenient matching for better accuracy
+      - REID_SIM_THRESHOLD=0.60
+      - REID_RERANK_ALPHA=0.30
+      - REID_RERANK_MARGIN=0.025
       - FEATURE_AVG_WINDOW=11
-      - MIN_CROP_HEIGHT=120
+      - MIN_CROP_HEIGHT=140
       - SAME_CAM_CONTINUITY_SECONDS=12
       - REID_TOPK=6
       - REID_GALLERY_TTL_SECONDS=3600
@@ -113,6 +114,6 @@ services:
     container_name: yolov11-mongo
     restart: always
     ports:
-      - "27017:27017"
+      - "27018:27017"
     volumes:
       - ./mongo_data:/data/db

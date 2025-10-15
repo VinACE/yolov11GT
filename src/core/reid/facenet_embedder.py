@@ -10,6 +10,7 @@ import torch
 import cv2
 from PIL import Image
 import os
+from typing import Optional
 
 class FaceNetEmbedder:
     """
@@ -68,6 +69,56 @@ class FaceNetEmbedder:
             traceback.print_exc()
             self.enabled = False
     
+    def detect_faces_multi_scale(self, crop_bgr: np.ndarray) -> Optional[torch.Tensor]:
+        """
+        Detect faces using multi-scale approach for better coverage.
+        
+        Args:
+            crop_bgr: Person crop in BGR format
+            
+        Returns:
+            Face tensor if detected, None otherwise
+        """
+        if not self.enabled or crop_bgr.size == 0:
+            return None
+        
+        try:
+            # Convert BGR to RGB
+            crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+            
+            # Try multiple scales for better face detection
+            scales = [0.8, 1.0, 1.2]  # Downscale, original, upscale
+            best_face = None
+            best_confidence = 0.0
+            
+            for scale in scales:
+                if scale != 1.0:
+                    # Resize image
+                    h, w = crop_rgb.shape[:2]
+                    new_h, new_w = int(h * scale), int(w * scale)
+                    resized = cv2.resize(crop_rgb, (new_w, new_h))
+                    img_pil = Image.fromarray(resized)
+                else:
+                    img_pil = Image.fromarray(crop_rgb)
+                
+                # Detect face at this scale
+                face = self.face_detector(img_pil)
+                
+                if face is not None:
+                    # For multi-scale, we'll use the first detected face
+                    # In a more sophisticated implementation, we could score faces
+                    # and pick the best one based on size, confidence, etc.
+                    if best_face is None:
+                        best_face = face
+                        best_confidence = 1.0  # MTCNN doesn't return confidence directly
+                        break  # Use first detection for now
+            
+            return best_face
+            
+        except Exception as e:
+            print(f"⚠️  Multi-scale face detection error: {e}")
+            return None
+    
     def embed(self, crop_bgr: np.ndarray) -> np.ndarray:
         """
         Extract face embedding from person crop
@@ -86,12 +137,8 @@ class FaceNetEmbedder:
             return vec
         
         try:
-            # Convert BGR to RGB
-            crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
-            img_pil = Image.fromarray(crop_rgb)
-            
-            # Detect face in the crop
-            face = self.face_detector(img_pil)
+            # Use multi-scale face detection for better coverage
+            face = self.detect_faces_multi_scale(crop_bgr)
             
             if face is None:
                 # No face detected - fallback to random
@@ -204,9 +251,10 @@ class HybridEmbedder:
             vec /= (np.linalg.norm(vec) + 1e-8)
             return vec
         
-        # Try face recognition first (fast!)
-        if self.face_enabled and self.face_embedder.can_use_face(crop_bgr):
+        # Try face recognition first (fast!) with multi-scale detection
+        if self.face_enabled:
             try:
+                # Use multi-scale face detection for better coverage
                 face_emb = self.face_embedder.embed(crop_bgr)
                 # Check if face was actually detected (not random fallback)
                 # Random embeddings have high variance, real ones are more structured
