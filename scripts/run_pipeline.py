@@ -14,10 +14,10 @@ def main() -> None:
     # ReID should match same people across cam2 and cam3 since they're identical
     # Expected unique count: 11-12 people (cam2 & cam3 should merge to same IDs)
     cameras = {
-        # "cam1": "/app/data/demo3.mp4",
+        "cam1": "/app/data/demo3.mp4",
         "cam2": "/app/data/Sample.mp4",
         "cam3": "/app/data/SampleGT.mp4",
-        # "cam4": "/app/data/demo3.mp4"
+        "cam4": "/app/data/demo3.mp4"
     }
 
     # Initialize with OSNet ReID for production (set use_osnet=False to use stub)
