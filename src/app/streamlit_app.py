@@ -101,10 +101,10 @@ def main() -> None:
     col3.metric("👤 Unknown", unknown)
     
     # Face gallery by gender
-    if males + females > 0:
+    if males + females + unknown > 0:
         st.markdown("#### 👤 Visitor Face Gallery")
         
-        tab1, tab2, tab3 = st.tabs(["👨 Males", "👩 Females", "👤 All"])
+        tab1, tab2, tab3, tab4 = st.tabs(["👨 Males", "👩 Females", "👤 Unknown", "👤 All"])
         
         with tab1:
             male_visitors = list(db.visitors.find({"gender": "male"}).limit(20))
@@ -114,8 +114,14 @@ def main() -> None:
                     with cols[idx % 5]:
                         crop_path = visitor.get("face_crop_path")
                         gid = visitor.get("global_id", "")
-                        if crop_path and os.path.exists(crop_path):
-                            st.image(crop_path, caption=gid, width=100, use_container_width=False)
+                        if crop_path:
+                            # Convert relative path to absolute path
+                            if not os.path.isabs(crop_path):
+                                crop_path = f"/app/{crop_path}"
+                            if os.path.exists(crop_path):
+                                st.image(crop_path, caption=gid, width=100, use_container_width=False)
+                            else:
+                                st.write(f"{gid} (crop not found)")
                         else:
                             st.write(gid)
             else:
@@ -129,14 +135,41 @@ def main() -> None:
                     with cols[idx % 5]:
                         crop_path = visitor.get("face_crop_path")
                         gid = visitor.get("global_id", "")
-                        if crop_path and os.path.exists(crop_path):
-                            st.image(crop_path, caption=gid, width=100, use_container_width=False)
+                        if crop_path:
+                            # Convert relative path to absolute path
+                            if not os.path.isabs(crop_path):
+                                crop_path = f"/app/{crop_path}"
+                            if os.path.exists(crop_path):
+                                st.image(crop_path, caption=gid, width=100, use_container_width=False)
+                            else:
+                                st.write(f"{gid} (crop not found)")
                         else:
                             st.write(gid)
             else:
                 st.info("No female visitors yet")
         
         with tab3:
+            unknown_visitors = list(db.visitors.find({"gender": "unknown"}).limit(20))
+            if unknown_visitors:
+                cols = st.columns(min(5, len(unknown_visitors)))
+                for idx, visitor in enumerate(unknown_visitors):
+                    with cols[idx % 5]:
+                        crop_path = visitor.get("face_crop_path")
+                        gid = visitor.get("global_id", "")
+                        if crop_path:
+                            # Convert relative path to absolute path
+                            if not os.path.isabs(crop_path):
+                                crop_path = f"/app/{crop_path}"
+                            if os.path.exists(crop_path):
+                                st.image(crop_path, caption=gid, width=100, use_container_width=False)
+                            else:
+                                st.write(f"{gid} (crop not found)")
+                        else:
+                            st.write(gid)
+            else:
+                st.info("No unknown gender visitors yet")
+        
+        with tab4:
             all_visitors = list(db.visitors.find().limit(30))
             if all_visitors:
                 cols = st.columns(6)
@@ -146,8 +179,14 @@ def main() -> None:
                         gender = visitor.get("gender", "unknown")
                         gender_icon = "👨" if gender == "male" else "👩" if gender == "female" else "👤"
                         gid = visitor.get('global_id', '')
-                        if crop_path and os.path.exists(crop_path):
-                            st.image(crop_path, caption=f"{gender_icon} {gid}", width=80, use_container_width=False)
+                        if crop_path:
+                            # Convert relative path to absolute path
+                            if not os.path.isabs(crop_path):
+                                crop_path = f"/app/{crop_path}"
+                            if os.path.exists(crop_path):
+                                st.image(crop_path, caption=f"{gender_icon} {gid}", width=80, use_container_width=False)
+                            else:
+                                st.write(f"{gender_icon} {gid} (crop not found)")
                         else:
                             st.write(f"{gender_icon} {gid}")
             else:

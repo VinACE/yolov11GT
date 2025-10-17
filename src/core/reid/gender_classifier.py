@@ -28,7 +28,12 @@ class GenderClassifier:
         Args:
             confidence_threshold: Minimum confidence to assign gender (0.0-1.0)
         """
-        self.confidence_threshold = confidence_threshold
+        # Allow overriding threshold via environment variable
+        try:
+            env_thr = os.environ.get("GENDER_CONFIDENCE_THRESHOLD")
+            self.confidence_threshold = float(env_thr) if env_thr is not None else confidence_threshold
+        except Exception:
+            self.confidence_threshold = confidence_threshold
         self.enabled = int(os.environ.get("GENDER_CLASSIFICATION_ENABLED", "1")) == 1
         self.model = None
         
@@ -66,18 +71,56 @@ class GenderClassifier:
                 except Exception as e:
                     print(f"⚠️ Gender model load error: {e}")
                     self.enabled = False
-            else:
-                print(f"🚻 Gender Classification: Enabled but model files not found")
-                print(f"   Expected: {prototxt}")
-                print(f"   Expected: {caffemodel}")
+            
+            # Only disable if no model was loaded successfully
+            if self.model is None:
+                print(f"🚻 Gender Classification: Enabled but no model files found")
+                print(f"   Expected ONNX: {onnx_model}")
+                print(f"   Expected Caffe: {prototxt}, {caffemodel}")
                 print(f"   Falling back to 'unknown' classification")
                 self.enabled = False
         else:
             print(f"🚻 Gender Classification: Disabled")
     
+    def _enhance_image(self, crop_bgr: np.ndarray) -> np.ndarray:
+        """
+        Enhance image quality for better gender classification.
+        
+        Args:
+            crop_bgr: Input BGR image
+            
+        Returns:
+            Enhanced BGR image
+        """
+        try:
+            # Convert to LAB color space for better enhancement
+            lab = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            
+            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) to L channel
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            l = clahe.apply(l)
+            
+            # Merge channels back
+            enhanced_lab = cv2.merge([l, a, b])
+            enhanced_bgr = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
+            
+            # Apply slight sharpening
+            kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+            sharpened = cv2.filter2D(enhanced_bgr, -1, kernel)
+            
+            # Blend original and sharpened (70% sharpened, 30% original)
+            enhanced = cv2.addWeighted(sharpened, 0.7, enhanced_bgr, 0.3, 0)
+            
+            return enhanced
+            
+        except Exception:
+            # Return original if enhancement fails
+            return crop_bgr
+    
     def classify(self, crop_bgr: np.ndarray) -> Tuple[str, float]:
         """
-        Classify gender from person crop using OpenCV DNN.
+        Classify gender from person crop using ensemble approach.
         
         Args:
             crop_bgr: Person crop image (BGR format)
@@ -94,17 +137,52 @@ class GenderClassifier:
             return ('unknown', 0.0)
         
         try:
+            # Try multiple approaches for better classification
+            results = []
+            
+            # Approach 1: Original crop
+            results.append(self._classify_single_crop(crop_bgr))
+            
+            # Approach 2: Enhanced crop
+            enhanced_crop = self._enhance_image(crop_bgr)
+            results.append(self._classify_single_crop(enhanced_crop))
+            
+            # Approach 3: Flipped crop (horizontal flip for data augmentation)
+            flipped_crop = cv2.flip(crop_bgr, 1)
+            results.append(self._classify_single_crop(flipped_crop))
+            
+            # Ensemble voting: take the most confident result
+            valid_results = [r for r in results if r[1] > 0.1]  # Filter out very low confidence
+            if not valid_results:
+                return ('unknown', 0.0)
+            
+            # Return the result with highest confidence
+            best_result = max(valid_results, key=lambda x: x[1])
+            return best_result
+            
+        except Exception as e:
+            # Silently return unknown on error (don't spam logs)
+            return ('unknown', 0.0)
+    
+    def _classify_single_crop(self, crop_bgr: np.ndarray) -> Tuple[str, float]:
+        """Classify a single crop image."""
+        try:
             # Preprocess based on model type
             if hasattr(self, 'model_type') and self.model_type == "ONNX":
                 # ONNX GoogleNet expects 224x224 with ImageNet normalization
-                blob = cv2.dnn.blobFromImage(
-                    crop_bgr,
-                    scalefactor=1.0/255.0,
-                    size=(224, 224),
-                    mean=(0.485, 0.456, 0.406),
-                    std=(0.229, 0.224, 0.225),
-                    swapRB=True  # BGR to RGB
-                )
+                # Resize and convert BGR to RGB
+                resized = cv2.resize(crop_bgr, (224, 224))
+                rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+                
+                # Normalize to [0,1] then apply ImageNet normalization
+                normalized = rgb.astype(np.float32) / 255.0
+                mean = np.array([0.485, 0.456, 0.406])
+                std = np.array([0.229, 0.224, 0.225])
+                normalized = (normalized - mean) / std
+                
+                # Convert to blob format (1, 3, 224, 224)
+                blob = np.transpose(normalized, (2, 0, 1))
+                blob = np.expand_dims(blob, axis=0)
             else:
                 # Caffe GilLevi model expects 227x227
                 blob = cv2.dnn.blobFromImage(

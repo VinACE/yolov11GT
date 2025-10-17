@@ -32,7 +32,7 @@ services:
       - REID_RERANK_ALPHA=0.30
       - REID_RERANK_MARGIN=0.025
       - FEATURE_AVG_WINDOW=11
-      - MIN_CROP_HEIGHT=140
+      - MIN_CROP_HEIGHT=100
       - SAME_CAM_CONTINUITY_SECONDS=12
       - REID_TOPK=6
       - REID_GALLERY_TTL_SECONDS=3600
@@ -43,6 +43,7 @@ services:
       # Gender Classification (improves ReID accuracy by filtering cross-gender matches)
       # Uses lightweight OpenCV DNN model (~44MB, ~5-10ms inference)
       - GENDER_CLASSIFICATION_ENABLED=1
+      - GENDER_CONFIDENCE_THRESHOLD=0.10
       # Hybrid ReID (FaceNet + OSNet) - RECOMMENDED for best speed + accuracy
       # Uses FaceNet when face visible (10-30ms, 99% accurate) + OSNet fallback (30-50ms)
       # Expected: 95-98% accuracy, avg 26ms per person (vs OSNet alone: 82-91%, 40ms)
@@ -116,4 +117,7 @@ services:
     ports:
       - "27018:27017"
     volumes:
-      - ./mongo_data:/data/db
+      - mongo_db:/data/db
+
+volumes:
+  mongo_db:

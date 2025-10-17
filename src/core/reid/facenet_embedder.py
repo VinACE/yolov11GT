@@ -210,11 +210,11 @@ class HybridEmbedder:
         # Initialize ReID embedder (OSNet as fallback)
         if reid_embedder is None:
             try:
-                from core.reid.osnet_reid import OSNetReIDEmbedder
+                from src.core.reid.osnet_reid import OSNetReIDEmbedder
                 self.reid_embedder = OSNetReIDEmbedder()
             except Exception as e:
                 print(f"⚠️  Could not load OSNet: {e}")
-                from core.reid.embedding import ReidEmbedder
+                from src.core.reid.embedding import ReidEmbedder
                 self.reid_embedder = ReidEmbedder()
         else:
             self.reid_embedder = reid_embedder

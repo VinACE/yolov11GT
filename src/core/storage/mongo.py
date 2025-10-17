@@ -42,12 +42,12 @@ def upsert_visitor(db, global_id: str, first_seen_at: datetime, last_seen_at: Op
         "$setOnInsert": {"first_seen_at": first_seen_at},
         "$set": {"last_seen_at": last_seen}
     }
-    # Add gender if provided (don't overwrite if already set)
-    if gender and gender != 'unknown':
-        update_doc["$setOnInsert"]["gender"] = gender
-    # Add face crop path if provided
+    # Add/refresh gender if provided (including 'unknown')
+    if gender is not None:
+        update_doc["$set"]["gender"] = gender
+    # Add/refresh face crop path if provided
     if face_crop_path:
-        update_doc["$setOnInsert"]["face_crop_path"] = face_crop_path
+        update_doc["$set"]["face_crop_path"] = face_crop_path
     
     db.visitors.update_one(
         {"global_id": global_id},

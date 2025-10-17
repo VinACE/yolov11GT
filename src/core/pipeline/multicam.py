@@ -7,17 +7,17 @@ import json
 import os
 from pathlib import Path
 
-from core.detection.yolo import YoloV11Detector
-from core.segmentation.sam import SamSegmenter
-from core.tracking.tracker import StrongSortLite
-from core.reid.embedding import ReidEmbedder, ReidIndex
-from core.reid.gender_classifier import create_gender_classifier
-from core.storage.mongo import get_mongo_db, upsert_visitor, insert_visit_event, close_open_visit
+from src.core.detection.yolo import YoloV11Detector
+from src.core.segmentation.sam import SamSegmenter
+from src.core.tracking.tracker import StrongSortLite
+from src.core.reid.embedding import ReidEmbedder, ReidIndex
+from src.core.reid.gender_classifier import create_gender_classifier
+from src.core.storage.mongo import get_mongo_db, upsert_visitor, insert_visit_event, close_open_visit
 _mongo_db = get_mongo_db()
 
 # Try to import production ReID, fallback to stub if unavailable
 try:
-    from core.reid.osnet_reid import OSNetReIDEmbedder
+    from src.core.reid.osnet_reid import OSNetReIDEmbedder
     OSNET_AVAILABLE = True
 except ImportError:
     OSNET_AVAILABLE = False
@@ -39,7 +39,7 @@ class MultiCameraOrchestrator:
         # PRIORITY 1: Try Hybrid (FaceNet + OSNet) if enabled - BEST PERFORMANCE
         if hybrid_enabled:
             try:
-                from core.reid.facenet_embedder import HybridEmbedder
+                from src.core.reid.facenet_embedder import HybridEmbedder
                 self.embedder = HybridEmbedder()
                 if self.embedder.face_enabled:
                     embedder_loaded = True
@@ -58,7 +58,7 @@ class MultiCameraOrchestrator:
         # PRIORITY 2: Try FastReID if explicitly enabled (slower but accurate)
         if not embedder_loaded and fastreid_enabled:
             try:
-                from core.reid.fastreid_embedder import FastReIDEmbedder
+                from src.core.reid.fastreid_embedder import FastReIDEmbedder
                 fre = FastReIDEmbedder()
                 if fre.predictor is not None and fre.enabled:  # Real model loaded successfully
                     self.embedder = fre
@@ -169,6 +169,24 @@ class MultiCameraOrchestrator:
         x2 = min(frame.shape[1], x2 + pad_x)
         y2 = min(frame.shape[0], y2 + pad_y)
         return frame[y1:y2, x1:x2].copy()
+    
+    def _enhance_crop_for_gender(self, crop: np.ndarray) -> np.ndarray:
+        """Enhance crop quality specifically for gender classification."""
+        try:
+            # Resize to minimum size for better face detection
+            h, w = crop.shape[:2]
+            if h < 150 or w < 150:
+                # Upscale small crops
+                scale = max(150/h, 150/w)
+                new_h, new_w = int(h * scale), int(w * scale)
+                crop = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+            
+            # Apply slight Gaussian blur to reduce noise
+            crop = cv2.GaussianBlur(crop, (3, 3), 0)
+            
+            return crop
+        except Exception:
+            return crop
 
     def _log_detection(self, camera_id: str, frame_num: int, detections: List[Dict], timestamp: datetime) -> None:
         """Log detection results to file"""
@@ -313,6 +331,8 @@ class MultiCameraOrchestrator:
                 gender = 'unknown'
                 gender_conf = 0.0
             else:
+                # Enhance crop quality for better gender classification
+                crop = self._enhance_crop_for_gender(crop)
                 # STEP 1: Classify gender BEFORE ReID matching
                 gender, gender_conf = self.gender_classifier.classify(crop)
                 
@@ -385,12 +405,9 @@ class MultiCameraOrchestrator:
                     except Exception as e:
                         print(f"⚠️ Failed to save face crop: {e}")
                 
-                try:
-                    # Save visitor with gender info and face crop path
-                    mv = upsert_visitor(_mongo_db, global_id, dt_now, dt_now, gender=gender, face_crop_path=crop_path)
-                    insert_visit_event(_mongo_db, mv.get("_id"), camera_id, dt_now, global_id=global_id, gender=gender)
-                except Exception:
-                    pass
+                # Save visitor with gender info and face crop path
+                mv = upsert_visitor(_mongo_db, global_id, dt_now, dt_now, gender=gender, face_crop_path=crop_path)
+                insert_visit_event(_mongo_db, mv.get("_id"), camera_id, dt_now, global_id=global_id, gender=gender)
                 
                 d["global_id"] = global_id
                 d["gender"] = gender  # Attach gender to detection
@@ -409,10 +426,8 @@ class MultiCameraOrchestrator:
                     is_new=False, similarity=similarity, timestamp=dt_now
                 )
                 
-                try:
-                    upsert_visitor(_mongo_db, global_id, dt_now, dt_now)
-                except Exception:
-                    pass
+                # Persist latest gender when available on matches too
+                upsert_visitor(_mongo_db, global_id, dt_now, dt_now, gender=gender)
                 
                 d["global_id"] = global_id
                 d["gender"] = gender  # Attach gender to detection
