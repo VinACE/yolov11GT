@@ -343,7 +343,88 @@ def main() -> None:
 
                 st.write("Top dwellers (exited visitors)")
                 top = exited.sort_values("dwell_minutes", ascending=False).head(20)[["visitor_id", "dwell_minutes"]]
-                st.bar_chart(top.set_index("visitor_id"))
+                
+                # Create interactive top dwellers with face crops
+                st.markdown("#### 🏆 Top Dwellers with Face Crops")
+                
+                # Display top dwellers in a grid with face crops and hover-like functionality
+                cols = st.columns(4)  # 4 columns for better layout
+                for idx, (_, row) in enumerate(top.iterrows()):
+                    visitor_id = row["visitor_id"]
+                    dwell_minutes = row["dwell_minutes"]
+                    
+                    with cols[idx % 4]:
+                        # Get visitor details from database
+                        visitor_doc = db.visitors.find_one({"global_id": visitor_id})
+                        if visitor_doc:
+                            crop_path = visitor_doc.get("face_crop_path")
+                            gender = visitor_doc.get("gender", "unknown")
+                            first_seen = visitor_doc.get("first_seen_at", "Unknown")
+                            last_seen = visitor_doc.get("last_seen_at", "Unknown")
+                            gender_icon = "👨" if gender == "male" else "👩" if gender == "female" else "👤"
+                            
+                            # Create expandable card with detailed info and face crop
+                            with st.expander(f"{gender_icon} {visitor_id} - {dwell_minutes:.1f} min", expanded=False):
+                                # Face crop image
+                                if crop_path:
+                                    # Convert relative path to absolute path
+                                    if not os.path.isabs(crop_path):
+                                        crop_path = f"/app/{crop_path}"
+                                    if os.path.exists(crop_path):
+                                        st.image(crop_path, width=120, use_container_width=False)
+                                    else:
+                                        st.write("🖼️ Crop not found")
+                                else:
+                                    st.write("📷 No face crop available")
+                                
+                                # Detailed information
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.metric("Dwell Time", f"{dwell_minutes:.1f} min")
+                                    st.metric("Gender", gender.capitalize())
+                                with col2:
+                                    st.metric("First Seen", first_seen.strftime("%H:%M:%S") if hasattr(first_seen, 'strftime') else str(first_seen))
+                                    st.metric("Last Seen", last_seen.strftime("%H:%M:%S") if hasattr(last_seen, 'strftime') else str(last_seen))
+                                
+                                # Quick stats
+                                st.caption(f"🆔 Global ID: {visitor_id}")
+                                st.caption(f"📅 First: {first_seen}")
+                                st.caption(f"📅 Last: {last_seen}")
+                
+                # Also show the bar chart for overall view with hover info
+                st.markdown("#### 📊 Dwell Time Chart")
+                
+                # Create an interactive chart with hover information
+                chart_data = top.set_index("visitor_id")
+                
+                # Add hover information to the chart
+                st.bar_chart(chart_data)
+                
+                # Add a detailed table below the chart with all information
+                st.markdown("#### 📋 Detailed Top Dwellers Table")
+                detailed_data = []
+                for _, row in top.iterrows():
+                    visitor_id = row["visitor_id"]
+                    dwell_minutes = row["dwell_minutes"]
+                    
+                    visitor_doc = db.visitors.find_one({"global_id": visitor_id})
+                    if visitor_doc:
+                        gender = visitor_doc.get("gender", "unknown")
+                        first_seen = visitor_doc.get("first_seen_at", "Unknown")
+                        last_seen = visitor_doc.get("last_seen_at", "Unknown")
+                        crop_path = visitor_doc.get("face_crop_path", "")
+                        
+                        detailed_data.append({
+                            "Visitor ID": visitor_id,
+                            "Dwell Time (min)": f"{dwell_minutes:.1f}",
+                            "Gender": gender.capitalize(),
+                            "First Seen": first_seen.strftime("%H:%M:%S") if hasattr(first_seen, 'strftime') else str(first_seen),
+                            "Last Seen": last_seen.strftime("%H:%M:%S") if hasattr(last_seen, 'strftime') else str(last_seen),
+                            "Face Crop": "✅ Available" if crop_path else "❌ Not available"
+                        })
+                
+                if detailed_data:
+                    st.dataframe(detailed_data, use_container_width=True)
             else:
                 st.info("No completed visits yet to show campus dwell insights.")
         except Exception:

@@ -19,7 +19,7 @@ services:
       - PYTHONUNBUFFERED=1
       - YOLO_VERBOSE=True
       - USE_MONGO=1
-      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_URI=mongodb://172.17.0.1:27018
       - MONGO_DB=yolov11
       - FRAME_PROCESS_EVERY=15
       - VISITOR_TIMEOUT_SECONDS=15
