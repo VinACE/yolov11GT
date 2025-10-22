@@ -3,40 +3,29 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
-from sqlalchemy.orm import Session
 import pandas as pd
 import numpy as np
 import os
 from datetime import datetime, timedelta
 
-from core.storage.db import get_db, init_db
-from core.storage.models import Visitor, VisitEvent, ActivityEvent
+from core.storage.mongo import get_mongo_db
 
 
-def load_stats(db: Session):
+def load_stats_mongo(db):
     today = datetime.utcnow().date()
     start = datetime(today.year, today.month, today.day)
-
-    # Unique visitors today
-    q = (
-        db.query(Visitor.id)
-        .join(VisitEvent, VisitEvent.visitor_id == Visitor.id)
-        .filter(VisitEvent.in_time >= start)
-        .distinct()
+    # Fix for MongoDB 8: Filter out null values explicitly
+    # MongoDB 8 includes null in distinct() results, MongoDB 6 excluded them
+    distinct_visitor_ids = db.visit_events.distinct(
+        "visitor_id", 
+        {"in_time": {"$gte": start}, "visitor_id": {"$exists": True, "$ne": None}}
     )
-    unique_today = q.count()
-
-    # Active visitors with timeout
+    # Additional Python-level filtering for empty strings
+    unique_today = len([v for v in distinct_visitor_ids if v])
     timeout_seconds = int(os.environ.get("VISITOR_TIMEOUT_SECONDS", "30"))
     cutoff = datetime.utcnow() - timedelta(seconds=timeout_seconds)
-    active = (
-        db.query(Visitor.id)
-        .join(VisitEvent, VisitEvent.visitor_id == Visitor.id)
-        .filter(VisitEvent.out_time.is_(None))
-        .filter(Visitor.last_seen_at >= cutoff)
-        .distinct()
-        .count()
-    )
+    recent_visitors = set(v["_id"] for v in db.visitors.find({"last_seen_at": {"$gte": cutoff}}, {"_id": 1}))
+    active = db.visit_events.count_documents({"out_time": None, "visitor_id": {"$in": list(recent_visitors)}})
     return active, unique_today
 
 def calculate_time_spent(entry: datetime, exit: datetime) -> str:
@@ -62,28 +51,27 @@ def main() -> None:
     st.set_page_config(page_title="Retail Analytics Dashboard", layout="wide")
     st.title("🏬 Retail Analytics Dashboard")
 
-    init_db()
-    with get_db() as db:
-        active, total_today = load_stats(db)
-        visitors = db.query(Visitor).order_by(Visitor.first_seen_at.desc()).all()
+    db = get_mongo_db()
+    active, total_today = load_stats_mongo(db)
+    visitors = list(db.visitors.find().sort("first_seen_at", -1))
 
-        # Build dwell dataframe for today
-        if visitors:
-            rows = []
-            start_day = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-            for v in visitors:
-                if v.first_seen_at >= start_day:
-                    dwell = max(0.0, (v.last_seen_at - v.first_seen_at).total_seconds())
-                    rows.append({
-                        "visitor_id": v.global_id,
-                        "first_seen_at": v.first_seen_at,
-                        "last_seen_at": v.last_seen_at,
-                        "dwell_seconds": dwell,
-                        "dwell_minutes": dwell / 60.0,
-                    })
-            dwell_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["visitor_id","first_seen_at","last_seen_at","dwell_seconds","dwell_minutes"])
-        else:
-            dwell_df = pd.DataFrame(columns=["visitor_id","first_seen_at","last_seen_at","dwell_seconds","dwell_minutes"])
+    # Build dwell dataframe for today
+    if visitors:
+        rows = []
+        start_day = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        for v in visitors:
+            if v.get("first_seen_at") and v.get("first_seen_at") >= start_day:
+                dwell = max(0.0, (v.get("last_seen_at") - v.get("first_seen_at")).total_seconds())
+                rows.append({
+                    "visitor_id": v.get("global_id"),
+                    "first_seen_at": v.get("first_seen_at"),
+                    "last_seen_at": v.get("last_seen_at"),
+                    "dwell_seconds": dwell,
+                    "dwell_minutes": dwell / 60.0,
+                })
+        dwell_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["visitor_id","first_seen_at","last_seen_at","dwell_seconds","dwell_minutes"])
+    else:
+        dwell_df = pd.DataFrame(columns=["visitor_id","first_seen_at","last_seen_at","dwell_seconds","dwell_minutes"])
 
     # Top metrics
     col1, col2, col3, col4 = st.columns(4)
@@ -98,10 +86,200 @@ def main() -> None:
     else:
         col3.metric("⏱️ Avg Dwell", "0s")
         col4.metric("P95 Dwell", "0s")
+    
+    # Gender distribution with face crops
+    st.markdown("---")
+    st.subheader("🚻 Gender Distribution")
+    
+    # Metrics
+    col1, col2, col3 = st.columns(3)
+    males = db.visitors.count_documents({"gender": "male"})
+    females = db.visitors.count_documents({"gender": "female"})
+    unknown = db.visitors.count_documents({"gender": "unknown"})
+    col1.metric("👨 Males", males)
+    col2.metric("👩 Females", females)
+    col3.metric("👤 Unknown", unknown)
+    
+    # Face gallery by gender
+    if males + females + unknown > 0:
+        st.markdown("#### 👤 Visitor Face Gallery")
+        
+        tab1, tab2, tab3, tab4 = st.tabs(["👨 Males", "👩 Females", "👤 Unknown", "👤 All"])
+        
+        with tab1:
+            male_visitors = list(db.visitors.find({"gender": "male"}).limit(20))
+            if male_visitors:
+                cols = st.columns(min(5, len(male_visitors)))
+                for idx, visitor in enumerate(male_visitors):
+                    with cols[idx % 5]:
+                        crop_path = visitor.get("face_crop_path")
+                        gid = visitor.get("global_id", "")
+                        if crop_path:
+                            # Convert relative path to absolute path
+                            if not os.path.isabs(crop_path):
+                                crop_path = f"/app/{crop_path}"
+                            if os.path.exists(crop_path):
+                                st.image(crop_path, caption=gid, width=100, use_container_width=False)
+                            else:
+                                st.write(f"{gid} (crop not found)")
+                        else:
+                            st.write(gid)
+            else:
+                st.info("No male visitors yet")
+        
+        with tab2:
+            female_visitors = list(db.visitors.find({"gender": "female"}).limit(20))
+            if female_visitors:
+                cols = st.columns(min(5, len(female_visitors)))
+                for idx, visitor in enumerate(female_visitors):
+                    with cols[idx % 5]:
+                        crop_path = visitor.get("face_crop_path")
+                        gid = visitor.get("global_id", "")
+                        if crop_path:
+                            # Convert relative path to absolute path
+                            if not os.path.isabs(crop_path):
+                                crop_path = f"/app/{crop_path}"
+                            if os.path.exists(crop_path):
+                                st.image(crop_path, caption=gid, width=100, use_container_width=False)
+                            else:
+                                st.write(f"{gid} (crop not found)")
+                        else:
+                            st.write(gid)
+            else:
+                st.info("No female visitors yet")
+        
+        with tab3:
+            unknown_visitors = list(db.visitors.find({"gender": "unknown"}).limit(20))
+            if unknown_visitors:
+                cols = st.columns(min(5, len(unknown_visitors)))
+                for idx, visitor in enumerate(unknown_visitors):
+                    with cols[idx % 5]:
+                        crop_path = visitor.get("face_crop_path")
+                        gid = visitor.get("global_id", "")
+                        if crop_path:
+                            # Convert relative path to absolute path
+                            if not os.path.isabs(crop_path):
+                                crop_path = f"/app/{crop_path}"
+                            if os.path.exists(crop_path):
+                                st.image(crop_path, caption=gid, width=100, use_container_width=False)
+                            else:
+                                st.write(f"{gid} (crop not found)")
+                        else:
+                            st.write(gid)
+            else:
+                st.info("No unknown gender visitors yet")
+        
+        with tab4:
+            all_visitors = list(db.visitors.find().limit(30))
+            if all_visitors:
+                cols = st.columns(6)
+                for idx, visitor in enumerate(all_visitors):
+                    with cols[idx % 6]:
+                        crop_path = visitor.get("face_crop_path")
+                        gender = visitor.get("gender", "unknown")
+                        gender_icon = "👨" if gender == "male" else "👩" if gender == "female" else "👤"
+                        gid = visitor.get('global_id', '')
+                        if crop_path:
+                            # Convert relative path to absolute path
+                            if not os.path.isabs(crop_path):
+                                crop_path = f"/app/{crop_path}"
+                            if os.path.exists(crop_path):
+                                st.image(crop_path, caption=f"{gender_icon} {gid}", width=80, use_container_width=False)
+                            else:
+                                st.write(f"{gender_icon} {gid} (crop not found)")
+                        else:
+                            st.write(f"{gender_icon} {gid}")
+            else:
+                st.info("No visitors yet")
 
     st.markdown("---")
     
-    # Visitor time spent table
+    # Entry/Exit Balance Monitor
+    st.subheader("🚪 Entry/Exit Balance Monitor")
+    try:
+        today = datetime.utcnow().date()
+        start = datetime(today.year, today.month, today.day)
+        all_visits = list(db.visit_events.find({"in_time": {"$gte": start}}))
+        
+        total_entries = len(all_visits)
+        total_exits = len([v for v in all_visits if v.get('out_time') is not None])
+        currently_inside = total_entries - total_exits
+        balance_ratio = total_exits / total_entries if total_entries > 0 else 0
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("📥 Entries", total_entries)
+        col2.metric("📤 Exits", total_exits)
+        col3.metric("👤 Inside Now", currently_inside)
+        
+        if 0.85 <= balance_ratio <= 1.15:
+            balance_status = "🟢 Normal"
+        elif balance_ratio < 0.85:
+            balance_status = "🟡 More Entries"
+            st.warning(f"⚠️ {currently_inside} people may still be inside")
+        else:
+            balance_status = "🔴 Imbalanced"
+            st.error("⚠️ More exits than entries - check system!")
+        
+        col4.metric("⚖️ Balance", f"{balance_ratio:.1%}", delta=balance_status)
+    except Exception as e:
+        st.info(f"Entry/Exit balance: {e}")
+    
+    # Camera Health Monitor
+    st.markdown("---")
+    st.subheader("📹 Camera Health Status")
+    try:
+        import requests
+        resp = requests.get("http://localhost:8000/system/camera-health", timeout=3)
+        if resp.ok:
+            health_data = resp.json()
+            st.write(f"**{health_data['overall_status']}**")
+            
+            if health_data['cameras']:
+                cols = st.columns(len(health_data['cameras']))
+                for idx, cam in enumerate(health_data['cameras']):
+                    with cols[idx]:
+                        st.metric(f"📷 {cam['camera_id']}", cam['status'])
+                        st.caption(f"Last: {cam['last_detection']}")
+                        st.caption(f"Recent: {cam['detections_last_5min']}")
+                        st.caption(f"ReID: {cam['reid_match_rate']:.0%}")
+        else:
+            st.info("Camera health API unavailable")
+    except Exception as e:
+        st.info(f"Camera health: {e}")
+    
+    # Peak Hours Analysis
+    st.markdown("---")
+    st.subheader("⏰ Peak Hours Analysis")
+    try:
+        import requests
+        resp = requests.get("http://localhost:8000/analytics/peak-hours", timeout=3)
+        if resp.ok:
+            peak_data = resp.json()
+            peak_df = pd.DataFrame(peak_data['peak_hours'])
+            
+            if not peak_df.empty and peak_df['visitor_count'].sum() > 0:
+                peak_df = peak_df.set_index('hour')
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("🔥 Busiest Hour", peak_data['busiest_hour'])
+                col2.metric("😴 Quietest Hour", peak_data['quietest_hour'])
+                col3.metric("Peak Visitors", int(peak_df['visitor_count'].max()))
+                
+                st.write("**Visitor Arrivals by Hour**")
+                st.bar_chart(peak_df['visitor_count'])
+                
+                st.write("**Average Dwell Time by Hour (minutes)**")
+                st.line_chart(peak_df['avg_dwell_minutes'])
+            else:
+                st.info("No peak hour data yet")
+        else:
+            st.info("Peak hours API unavailable")
+    except Exception as e:
+        st.info(f"Peak hours: {e}")
+    
+    st.markdown("---")
+    
+    # Visitor time spent table with gender
     st.subheader("⏰ Time Spent by Each Visitor (ReID-based)")
     
     if len(dwell_df) > 0:
@@ -109,8 +287,15 @@ def main() -> None:
         for _, r in dwell_df.sort_values("first_seen_at", ascending=False).iterrows():
             time_spent = calculate_time_spent(r["first_seen_at"], r["last_seen_at"])
             status = "🟢 In Premises" if r["first_seen_at"] == r["last_seen_at"] else "🔴 Exited"
+            
+            # Get gender from database
+            visitor_doc = db.visitors.find_one({"global_id": r["visitor_id"]})
+            gender = visitor_doc.get("gender", "unknown") if visitor_doc else "unknown"
+            gender_icon = "👨" if gender == "male" else "👩" if gender == "female" else "👤"
+            
             visitor_data.append({
                 "Visitor ID": r["visitor_id"],
+                "Gender": f"{gender_icon} {gender.capitalize()}",
                 "Entry Time": r["first_seen_at"].strftime("%Y-%m-%d %H:%M:%S"),
                 "Last Seen": r["last_seen_at"].strftime("%Y-%m-%d %H:%M:%S"),
                 "Time Spent": time_spent,
@@ -133,9 +318,7 @@ def main() -> None:
         st.subheader("📈 Time Series (Today)")
         try:
             ts_df = dwell_df.set_index("first_seen_at").sort_index()
-            # Arrivals per 5 min
             arrivals = ts_df["visitor_id"].resample("5T").count().rename("arrivals")
-            # Average dwell per 5 min
             avg_dwell = ts_df["dwell_minutes"].resample("5T").mean().rename("avg_dwell_min")
             st.line_chart(pd.concat([arrivals, avg_dwell], axis=1).fillna(0))
             st.bar_chart(arrivals)
@@ -147,7 +330,6 @@ def main() -> None:
         try:
             exited = dwell_df[dwell_df["dwell_minutes"].notna()].copy()
             if len(exited) > 0:
-                # Histogram of dwell minutes (5-min bins)
                 max_minutes = exited["dwell_minutes"].max()
                 if pd.isna(max_minutes):
                     max_minutes = 0
@@ -159,10 +341,90 @@ def main() -> None:
                 st.write("Dwell time distribution (5-min bins):")
                 st.bar_chart(pd.DataFrame({"count": hist_counts}, index=bin_labels))
 
-                # Top dwellers (top 20)
                 st.write("Top dwellers (exited visitors)")
                 top = exited.sort_values("dwell_minutes", ascending=False).head(20)[["visitor_id", "dwell_minutes"]]
-                st.bar_chart(top.set_index("visitor_id"))
+                
+                # Create interactive top dwellers with face crops
+                st.markdown("#### 🏆 Top Dwellers with Face Crops")
+                
+                # Display top dwellers in a grid with face crops and hover-like functionality
+                cols = st.columns(4)  # 4 columns for better layout
+                for idx, (_, row) in enumerate(top.iterrows()):
+                    visitor_id = row["visitor_id"]
+                    dwell_minutes = row["dwell_minutes"]
+                    
+                    with cols[idx % 4]:
+                        # Get visitor details from database
+                        visitor_doc = db.visitors.find_one({"global_id": visitor_id})
+                        if visitor_doc:
+                            crop_path = visitor_doc.get("face_crop_path")
+                            gender = visitor_doc.get("gender", "unknown")
+                            first_seen = visitor_doc.get("first_seen_at", "Unknown")
+                            last_seen = visitor_doc.get("last_seen_at", "Unknown")
+                            gender_icon = "👨" if gender == "male" else "👩" if gender == "female" else "👤"
+                            
+                            # Create expandable card with detailed info and face crop
+                            with st.expander(f"{gender_icon} {visitor_id} - {dwell_minutes:.1f} min", expanded=False):
+                                # Face crop image
+                                if crop_path:
+                                    # Convert relative path to absolute path
+                                    if not os.path.isabs(crop_path):
+                                        crop_path = f"/app/{crop_path}"
+                                    if os.path.exists(crop_path):
+                                        st.image(crop_path, width=120, use_container_width=False)
+                                    else:
+                                        st.write("🖼️ Crop not found")
+                                else:
+                                    st.write("📷 No face crop available")
+                                
+                                # Detailed information
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.metric("Dwell Time", f"{dwell_minutes:.1f} min")
+                                    st.metric("Gender", gender.capitalize())
+                                with col2:
+                                    st.metric("First Seen", first_seen.strftime("%H:%M:%S") if hasattr(first_seen, 'strftime') else str(first_seen))
+                                    st.metric("Last Seen", last_seen.strftime("%H:%M:%S") if hasattr(last_seen, 'strftime') else str(last_seen))
+                                
+                                # Quick stats
+                                st.caption(f"🆔 Global ID: {visitor_id}")
+                                st.caption(f"📅 First: {first_seen}")
+                                st.caption(f"📅 Last: {last_seen}")
+                
+                # Also show the bar chart for overall view with hover info
+                st.markdown("#### 📊 Dwell Time Chart")
+                
+                # Create an interactive chart with hover information
+                chart_data = top.set_index("visitor_id")
+                
+                # Add hover information to the chart
+                st.bar_chart(chart_data)
+                
+                # Add a detailed table below the chart with all information
+                st.markdown("#### 📋 Detailed Top Dwellers Table")
+                detailed_data = []
+                for _, row in top.iterrows():
+                    visitor_id = row["visitor_id"]
+                    dwell_minutes = row["dwell_minutes"]
+                    
+                    visitor_doc = db.visitors.find_one({"global_id": visitor_id})
+                    if visitor_doc:
+                        gender = visitor_doc.get("gender", "unknown")
+                        first_seen = visitor_doc.get("first_seen_at", "Unknown")
+                        last_seen = visitor_doc.get("last_seen_at", "Unknown")
+                        crop_path = visitor_doc.get("face_crop_path", "")
+                        
+                        detailed_data.append({
+                            "Visitor ID": visitor_id,
+                            "Dwell Time (min)": f"{dwell_minutes:.1f}",
+                            "Gender": gender.capitalize(),
+                            "First Seen": first_seen.strftime("%H:%M:%S") if hasattr(first_seen, 'strftime') else str(first_seen),
+                            "Last Seen": last_seen.strftime("%H:%M:%S") if hasattr(last_seen, 'strftime') else str(last_seen),
+                            "Face Crop": "✅ Available" if crop_path else "❌ Not available"
+                        })
+                
+                if detailed_data:
+                    st.dataframe(detailed_data, use_container_width=True)
             else:
                 st.info("No completed visits yet to show campus dwell insights.")
         except Exception:
@@ -183,11 +445,153 @@ def main() -> None:
             st.info("/dwell-stats not available yet.")
     except Exception:
         st.info("Unable to reach API for dwell summary.")
+
+    # Hourly presence analytics
+    st.markdown("---")
+    st.subheader("🕒 Hourly Presence (Today)")
+    try:
+        import requests
+        resp = requests.get("http://localhost:8000/presence-hourly", timeout=3)
+        if resp.ok:
+            data = resp.json()
+            buckets = data.get("buckets", [])
+            if buckets:
+                ph_df = pd.DataFrame(buckets)
+                ph_df["hour"] = pd.to_datetime(ph_df["hour_start"]).dt.strftime("%H:00")
+                cols = st.columns(2)
+                with cols[0]:
+                    st.write("Presence minutes per hour")
+                    st.bar_chart(ph_df.set_index("hour")["presence_minutes"])
+                with cols[1]:
+                    st.write("Arrivals and unique visitors per hour")
+                    st.line_chart(ph_df.set_index("hour")[["arrivals", "unique_visitors"]])
+            else:
+                st.info("No hourly data available yet.")
+        else:
+            st.info("/presence-hourly not available yet.")
+    except Exception:
+        st.info("Unable to reach API for hourly presence.")
     else:
         st.info("No visitors detected yet. Start the pipeline to begin tracking!")
+    
+    # Phase 2 Features
+    st.markdown("---")
+    st.header("🔍 Phase 2 Advanced Analytics")
+    
+    tab1, tab2, tab3, tab4 = st.tabs(["🚨 Anomalies", "🗺️ Visitor Journey", "📊 Weekly Trends", "📥 Export Reports"])
+    
+    with tab1:
+        st.subheader("🚨 Real-Time Anomaly Detection")
+        try:
+            import requests
+            resp = requests.get("http://localhost:8000/analytics/anomalies?hours=24", timeout=5)
+            if resp.ok:
+                anomaly_data = resp.json()
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Total Anomalies", anomaly_data['total_count'])
+                col2.metric("Critical", anomaly_data['critical_count'], delta="🔴")
+                col3.metric("Warnings", anomaly_data['total_count'] - anomaly_data['critical_count'], delta="🟡")
+                
+                if anomaly_data['anomalies']:
+                    st.write("**Recent Anomalies:**")
+                    for anomaly in anomaly_data['anomalies'][:10]:
+                        with st.expander(f"{anomaly['severity']} - {anomaly['type'].replace('_', ' ').title()} ({anomaly['timestamp'][:16]})"):
+                            st.write(f"**Description:** {anomaly['description']}")
+                            if anomaly.get('camera_id'):
+                                st.write(f"**Camera:** {anomaly['camera_id']}")
+                            if anomaly.get('zone'):
+                                st.write(f"**Zone:** {anomaly['zone']}")
+                            if anomaly.get('value'):
+                                st.write(f"**Value:** {anomaly['value']}")
+                else:
+                    st.success("✅ No anomalies detected - all systems normal")
+            else:
+                st.info("Anomaly detection API unavailable")
+        except Exception as e:
+            st.info(f"Anomaly detection: {e}")
+    
+    with tab2:
+        st.subheader("🗺️ Visitor Journey Tracker")
+        
+        # Get list of visitors
+        try:
+            visitor_id = st.text_input("Enter Visitor ID (e.g., PERSON_001):", "")
+            
+            if visitor_id and st.button("Track Journey"):
+                import requests
+                resp = requests.get(f"http://localhost:8000/analytics/visitor-journey/{visitor_id}", timeout=5)
+                if resp.ok:
+                    journey_data = resp.json()
+                    
+                    col1, col2 = st.columns(2)
+                    col1.metric("Cameras Visited", journey_data['total_cameras'])
+                    col2.metric("Zones Visited", journey_data['total_zones'])
+                    
+                    st.write("**Path Timeline:**")
+                    for i, step in enumerate(journey_data['path'], 1):
+                        st.write(f"{i}. 📹 **{step['camera_id']}** at {step['timestamp'][:19]}")
+                        if step.get('zone'):
+                            st.write(f"   └─ 🏷️ Zone: {step['zone']}")
+                else:
+                    st.error(f"Visitor {visitor_id} not found")
+        except Exception as e:
+            st.info(f"Journey tracker: {e}")
+    
+    with tab3:
+        st.subheader("📊 Weekly Trend Analysis")
+        try:
+            import requests
+            resp = requests.get("http://localhost:8000/analytics/weekly-trend", timeout=5)
+            if resp.ok:
+                trend_data = resp.json()
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Week Total", trend_data['week_total'])
+                col2.metric("Avg Dwell Time", f"{trend_data['week_avg_dwell']:.1f} min")
+                col3.metric("Trend", trend_data['trend'])
+                
+                if trend_data['days']:
+                    trend_df = pd.DataFrame(trend_data['days'])
+                    trend_df['date'] = pd.to_datetime(trend_df['date'])
+                    
+                    st.write("**Daily Visitor Count:**")
+                    st.line_chart(trend_df.set_index('date')['total_visitors'])
+                    
+                    st.write("**Daily Statistics:**")
+                    st.dataframe(trend_df[['date', 'total_visitors', 'avg_dwell_minutes', 'peak_hour', 'busiest_camera']])
+                else:
+                    st.info("Not enough data for trend analysis")
+            else:
+                st.info("Weekly trend API unavailable")
+        except Exception as e:
+            st.info(f"Weekly trends: {e}")
+    
+    with tab4:
+        st.subheader("📥 Export Reports")
+        st.write("Download analytics data as CSV files:")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**📊 Visitor Reports:**")
+            if st.button("Export Visitors CSV"):
+                st.markdown("[Download Visitors Report](http://localhost:8000/export/visitors.csv)")
+            
+            if st.button("Export Peak Hours CSV"):
+                st.markdown("[Download Peak Hours Report](http://localhost:8000/export/peak-hours.csv)")
+        
+        with col2:
+            st.write("**📹 System Reports:**")
+            if st.button("Export Camera Health CSV"):
+                st.markdown("[Download Camera Health](http://localhost:8000/export/camera-health.csv)")
+            
+            if st.button("Export Zone Stats CSV"):
+                st.markdown("[Download Zone Statistics](http://localhost:8000/export/zone-stats.csv)")
+        
+        st.info("💡 Tip: Click the buttons above to generate download links. Files will be named with today's date.")
 
 
 if __name__ == "__main__":
     main()
-
 

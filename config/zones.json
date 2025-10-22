@@ -1,0 +1,33 @@
+{
+  "cam1": {
+    "entrance": {
+      "polygon": [[50, 100], [300, 100], [300, 400], [50, 400]],
+      "type": "entry_point",
+      "capacity": 10,
+      "description": "Main entrance area"
+    },
+    "waiting_area": {
+      "polygon": [[320, 150], [580, 150], [580, 420], [320, 420]],
+      "type": "congregation",
+      "capacity": 20,
+      "description": "Waiting/lobby area"
+    }
+  },
+  "cam2": {
+    "corridor": {
+      "polygon": [[0, 0], [640, 0], [640, 480], [0, 480]],
+      "type": "passage",
+      "capacity": 15,
+      "description": "Main corridor - full frame"
+    }
+  },
+  "cam3": {
+    "corridor": {
+      "polygon": [[0, 0], [640, 0], [640, 480], [0, 480]],
+      "type": "passage",
+      "capacity": 15,
+      "description": "Main corridor - full frame (duplicate of cam2)"
+    }
+  }
+}
+

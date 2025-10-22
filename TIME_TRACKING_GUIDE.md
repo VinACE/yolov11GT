@@ -266,7 +266,7 @@ with get_db() as db:
 1. **For accurate timing:** Ensure cameras cover all entry/exit points
 2. **Multi-camera setup:** ReID links same person across cameras for accurate total time
 3. **Real-time updates:** Dashboard auto-refreshes (or manually refresh)
-4. **Historical data:** All data persists in SQLite database at `/app/analytics.db`
+4. **Historical data:** All data persists in MongoDB at `mongodb://mongo:27017/yolov11`
 
 ---
 

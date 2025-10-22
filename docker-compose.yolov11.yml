@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile.yolov11
     container_name: yolov11-cpu
+    depends_on:
+      - mongo
     volumes:
       - ./data:/app/data:ro
       - ./outputs:/app/outputs
@@ -11,21 +13,51 @@ services:
       - ./src:/app/src
       - ./scripts:/app/scripts
     ports:
-      - "8000:8000"
+      - "8001:8000"
       - "8501:8501"
     environment:
       - PYTHONUNBUFFERED=1
       - YOLO_VERBOSE=True
-      - FRAME_PROCESS_EVERY=5
+      - USE_MONGO=1
+      - MONGO_URI=mongodb://172.17.0.1:27018
+      - MONGO_DB=yolov11
+      - FRAME_PROCESS_EVERY=15
       - VISITOR_TIMEOUT_SECONDS=15
-      - REID_SIM_THRESHOLD=0.71
-      - FEATURE_AVG_WINDOW=5
-      - MIN_CROP_HEIGHT=120
-      - SAME_CAM_CONTINUITY_SECONDS=10
-      - REID_TOPK=5
-      - REID_GALLERY_TTL_SECONDS=60
-      - REID_EMA_MOMENTUM=0.9
+      # ReID Matching Parameters (Hybrid: gtdevvin frame rate + gtvin tuning)
+      # Using FRAME_PROCESS_EVERY=15 for better tracking continuity (was 24)
+      # Using optimized threshold from gtvin extensive tuning
+      # Using OSNet for speed (30-50ms) - FastREID too slow (100-150ms)
+      # OPTIMIZED FOR HYBRID REID: More lenient matching for better accuracy
+      - REID_SIM_THRESHOLD=0.60
+      - REID_RERANK_ALPHA=0.30
+      - REID_RERANK_MARGIN=0.025
+      - FEATURE_AVG_WINDOW=11
+      - MIN_CROP_HEIGHT=100
+      - SAME_CAM_CONTINUITY_SECONDS=12
+      - REID_TOPK=6
+      - REID_GALLERY_TTL_SECONDS=3600
+      - REID_EMA_MOMENTUM=0.88
+      # Cross-Camera Handoff (more lenient)
+      - HANDOFF_WINDOW_SECONDS=10
+      - HANDOFF_MARGIN=0.04
+      # Gender Classification (improves ReID accuracy by filtering cross-gender matches)
+      # Uses lightweight OpenCV DNN model (~44MB, ~5-10ms inference)
+      - GENDER_CLASSIFICATION_ENABLED=1
+      - GENDER_CONFIDENCE_THRESHOLD=0.10
+      # Hybrid ReID (FaceNet + OSNet) - RECOMMENDED for best speed + accuracy
+      # Uses FaceNet when face visible (10-30ms, 99% accurate) + OSNet fallback (30-50ms)
+      # Expected: 95-98% accuracy, avg 26ms per person (vs OSNet alone: 82-91%, 40ms)
+      - USE_HYBRID_REID=1
+      # FastReID Configuration (MSMT17 R50 or Market1501 R50)
+      # ✅ Python 3.11 compatible with compatibility shim in fastreid_embedder.py
+      # MSMT17: Better cross-domain generalization (294MB, 2048-dim)
+      # Market1501: Retail-focused (288MB, 2048-dim)
+      # NOTE: FastREID is slow on CPU (~100-150ms/person) - too slow for real-time
+      # Keeping OSNet for speed (30-50ms) - see SPEED_VS_ACCURACY_MODELS.md for alternatives
       - FASTREID_ENABLED=0
+      # Switch between: msmt17_r50 or market1501_r50
+      - FASTREID_PRESET=msmt17_r50
+      # OSNet fallback config (unused when FastReID enabled)
       - TORCHREID_MODEL_NAME=osnet_x0_75
       - TORCHREID_IMAGE_SIZE=256x128
       - TORCHREID_PIXEL_MEAN=0.485,0.456,0.406
@@ -35,7 +67,7 @@ services:
       resources:
         limits:
           cpus: '4.0'
-          memory: 4G
+          memory: 6G  # Increased for Hybrid (FaceNet + OSNet models)
         reservations:
           cpus: '1.0'
           memory: 1G
@@ -78,16 +110,14 @@ services:
       bash -lc "python /app/scripts/scheduler_reset.py"
     restart: unless-stopped
  
-  mysql:
-    image: mysql:8.0
-    container_name: yolov11-mysql
+  mongo:
+    image: mongo:8
+    container_name: yolov11-mongo
     restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: rootpassword   # 🔐 change this
-      MYSQL_DATABASE: yolov11_db
-      MYSQL_USER: yolouser
-      MYSQL_PASSWORD: yolopassword       # 🔐 change this too
     ports:
-      - "3306:3306"
+      - "27018:27017"
     volumes:
-      - ./mysql_data:/var/lib/mysql
+      - mongo_db:/data/db
+
+volumes:
+  mongo_db:

@@ -106,17 +106,28 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir \
     fastapi \
     uvicorn \
-    SQLAlchemy \
-    alembic \
     apscheduler \
     streamlit \
     faiss-cpu \
+    pymongo \
     pytz
 
 # Production ReID dependencies
 RUN pip install --no-cache-dir \
     torchreid \
-    gdown
+    gdown \
+    facenet-pytorch
+
+# Install FastReID dependencies and source
+RUN pip install --no-cache-dir yacs tabulate termcolor && \
+    git clone https://github.com/JDAI-CV/fast-reid.git /app/fast-reid && \
+    # Fix Python 3.11 compatibility (collections.Mapping moved to collections.abc)
+    find /app/fast-reid -name "*.py" -type f -exec sed -i 's/from collections import Mapping/from collections.abc import Mapping/g' {} \; && \
+    find /app/fast-reid -name "*.py" -type f -exec sed -i 's/from collections import Iterable/from collections.abc import Iterable/g' {} \; && \
+    find /app/fast-reid -name "*.py" -type f -exec sed -i 's/from collections import Container/from collections.abc import Container/g' {} \;
+
+# Add FastReID to PYTHONPATH
+ENV PYTHONPATH="${PYTHONPATH}:/app/fast-reid"
 
 # Try to install supergradients (optional - may fail on some systems)
 RUN pip install --no-cache-dir super-gradients || \
@@ -124,6 +135,14 @@ RUN pip install --no-cache-dir super-gradients || \
 
 # Create directories for models and data
 RUN mkdir -p /app/models /app/data /app/runs /app/outputs
+
+# If OSNet weights are provided in the repo, bake them into the torch cache so
+# torchreid can load without downloading (works offline and on restricted networks)
+COPY models/osnet_x0_75_imagenet.pth /root/.cache/torch/checkpoints/osnet_x0_75_imagenet.pth
+
+# Also bake FaceNet VGGFace2 weights so Hybrid can run fully offline
+# facenet_pytorch will look here when pretrained='vggface2'
+COPY models/20180402-114759-vggface2.pt /root/.cache/torch/checkpoints/20180402-114759-vggface2.pt
 
 # Set environment variables for YOLOv11
 ENV YOLO_VERBOSE=True

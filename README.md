@@ -2,12 +2,12 @@
 
 Backend-focused scaffold for multi-camera retail analytics:
 - YOLOv11 person detection
-- SAM segmentation (stub)
-- Single-camera tracking (stub; replace with DeepSORT/ByteTrack)
-- Multi-camera ReID with FAISS index (stub embedder)
-- Time-in/out and zone activity storage (SQLAlchemy)
-- FastAPI service (health/stats/reset)
-- Streamlit dashboard (quick metrics)
+- SAM segmentation
+- StrongSORT tracking with appearance features
+- Multi-camera ReID with FAISS index (OSNet embedder)
+- Time-in/out and zone activity storage (MongoDB)
+- FastAPI service (health/stats/analytics)
+- Streamlit dashboard (real-time metrics & dwell insights)
 - Daily 12 PM IST reset scheduler
 
 Note: Vision modules ship as minimal stubs for wiring. Replace with production models.
@@ -32,8 +32,7 @@ src/
     pipeline/
       multicam.py            # Multi-camera orchestrator
     storage/
-      db.py                  # Engine/session
-      models.py              # ORM models
+      mongo.py               # MongoDB connection & helpers
 scripts/
   run_pipeline.py            # Example pipeline run
   scheduler_reset.py         # Daily reset (12:00 PM IST)
@@ -77,15 +76,16 @@ docker-compose -f docker-compose.yolov11.yml exec yolov11 bash -lc "python scrip
 ```
 
 ## Config
-- `ANALYTICS_DB_PATH` (default `/app/analytics.db`)
+- `MONGO_URI` (default `mongodb://mongo:27017`)
+- `MONGO_DB` (default `yolov11`)
 - `ANALYTICS_API_BASE` for scheduler (default `http://localhost:8000`)
-- Expose ports in compose: `8000:8000`, `8501:8501`
+- Expose ports in compose: `8000:8000`, `8501:8501`, `27017:27017`
 
 ## Production Upgrades
-- Replace `segmentation/sam.py` with real SAM inference
-- Swap `tracking/tracker.py` to DeepSORT/ByteTrack
-- Use trained ReID model in `reid/embedding.py`
-- Add zone polygons + analytics in `pipeline/multicam.py`
+- Fine-tune ReID thresholds for your environment
+- Add zone polygons + heatmap analytics in `pipeline/multicam.py`
+- Scale to more cameras with load balancing
+- Add GPU support for FastReID (requires Python 3.9 for yacs compatibility)
 
 ## Architecture & Flow
 
@@ -100,11 +100,11 @@ flowchart LR
 
     C1 & C2 & Cn -->|frames| DET[YOLOv11 Detector]
     DET -->|bboxes (persons)| SAM[SAM Segmenter]
-    SAM -->|dets + masks| TRK[Single-Camera Tracker]
-    TRK -->|local IDs + crops| EMB[ReID Embedder]
-    EMB -->|embeddings| IDX[FAISS / ReID Index]
+    SAM -->|dets + masks| TRK[StrongSORT Tracker]
+    TRK -->|local IDs + crops| EMB[OSNet ReID Embedder]
+    EMB -->|embeddings| IDX[FAISS ReID Index]
     IDX -->|match global ID| ORCH[Multi-Camera Orchestrator]
-    ORCH -->|upsert| DB[(SQLAlchemy DB)]
+    ORCH -->|upsert| DB[(MongoDB)]
     ORCH --> API[FastAPI]
     API --> ST[Streamlit Dashboard]
 
@@ -118,13 +118,14 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant D as Docker/Compose
+    participant M as MongoDB
     participant API as FastAPI
-    participant DB as SQLAlchemy DB
     participant ST as Streamlit
     participant P as Pipeline Runner
 
+    D->>M: Start MongoDB container
     D->>API: python -m uvicorn src.api.main:app
-    API->>DB: init_db() (create tables)
+    API->>M: get_mongo_db() (create indexes)
     D->>ST: streamlit run src/app/streamlit_app.py
     D->>P: python scripts/run_pipeline.py
     loop For each frame per camera
@@ -133,7 +134,8 @@ sequenceDiagram
         P->>P: tracker.update(detections)
         P->>P: embedder.embed(crop)
         P->>P: index.search(embedding)
-        P->>DB: upsert visitor/visit events
+        P->>M: upsert visitor/visit events
     end
-    Note over API,ST: ST queries API /stats for metrics
+    Note over API,ST: ST queries MongoDB directly for metrics
 ```
+mongodb://admin:admin123@localhost:27018/yolov11_db?authSource=admin

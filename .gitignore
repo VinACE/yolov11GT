@@ -1,7 +1,7 @@
 models/fast-reid
 models/fast-reid
 *.jpg
-
+**/*.jpg
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -110,6 +110,16 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+**/*.pth
+
+models/fast-reid-weights/*.pth
+# Exclude MongoDB data files and directories
+mongo_data/
+
+# Exclude compilation/runtime artifacts
+outputs/
+mongo_data.mongo6_backup/
+**/*.pt
 
 outputs/debug/
 outputs/

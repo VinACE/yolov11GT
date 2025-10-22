@@ -26,7 +26,7 @@ docker-compose -f docker-compose.yolov11.yml exec yolov11 python /app/test_yolov
 
 ```bash
 # Build the image
-    docker build -f Dockerfile.yolov11 -t yolov11-cpu .
+r
 
 # Run the container
 docker run -it --rm \
@@ -181,3 +181,6 @@ model = YOLO('yolo11n.pt')
 results = model('/app/data/video.mp4')
 results[0].save('/app/outputs/result_video.mp4')
 ```
+
+### Model zoo
+https://github.com/KaiyangZhou/deep-person-reid/blob/master/docs/MODEL_ZOO.md
