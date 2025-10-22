@@ -111,3 +111,5 @@ ENV/
 env.bak/
 venv.bak/
 
+outputs/debug/
+outputs/
